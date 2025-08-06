@@ -81,3 +81,15 @@ services:
       - NEO4J_server_memory_heap_max__size=4G
       - NEO4J_dbms_memory_transaction_total_max=4G
 ```
+
+## Disclaimer
+
+I’m **not a professional developer**. This project is a learning/side effort, mainly created during free time. The code may contain bugs, incomplete features, or shortcuts that **do not follow best practices**—especially on the frontend. Use at your own risk.
+
+This software is provided **“as is”**, without warranty of any kind. Under the GPL-3.0 license, there is **no warranty** and the author shall **not be liable** for any damages arising from the use of this software.
+
+### Responsible Use
+- **Only use this tool on networks, systems, and data you own or have explicit permission to test/use.**
+- The author is **not responsible** for any misuse, unauthorized access, or violations of applicable laws or policies by users of this tool.
+
+By using this software, you agree to use it responsibly and in compliance with all applicable laws, regulations, and terms of service.
