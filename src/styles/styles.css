@@ -1,0 +1,566 @@
+/* PillageSuiteExplorer - Unified Styles */
+
+/* Base styles and CSS variables for light/dark themes */
+:root {
+  /* Font family */
+  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+
+  /* Font settings */
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+
+  /* Default to light mode */
+  color-scheme: light;
+}
+
+/* Light theme variables (default) */
+:root.light-mode {
+  /* Main colors */
+  --color-primary: #1d4ed8;
+  --color-primary-rgb: 29, 78, 216;
+  --color-primary-darker: #1e40af;
+  --color-secondary: #3b82f6;
+  --color-secondary-rgb: 59, 130, 246;
+  --color-accent: #8b5cf6;
+  --color-accent-rgb: 139, 92, 246;
+  
+  /* Background colors */
+  --color-bg: #f8fafc;
+  --color-bg-rgb: 248, 250, 252;
+  --color-content-bg: #ffffff;
+  --color-sidebar-bg: #f1f5f9;
+  
+  /* Text colors */
+  --color-text: #1e293b;
+  --color-text-light: #f8fafc;
+  --color-text-muted: #64748b;
+  
+  /* Status colors */
+  --color-success: #10b981;
+  --color-error: #ef4444;
+  --color-warning: #f59e0b;
+  --color-info: #3b82f6;
+  --color-info-rgb: 59, 130, 246;
+  
+  /* Border colors */
+  --color-border: #e2e8f0;
+  --color-border-light: #f1f5f9;
+  
+  /* Card, dropdown, and UI elements */
+  --color-card-bg: #ffffff;
+  --color-card-shadow: rgba(0, 0, 0, 0.1);
+  
+  --color-dropdown-bg: #1e40af;
+  --color-dropdown-hover: rgba(255, 255, 255, 0.1);
+  --color-dropdown-menu-bg: #ffffff;
+  --color-dropdown-item-hover: #f1f5f9;
+  --color-dropdown-item-active-bg: #eff6ff;
+  
+  /* Form controls */
+  --color-input-bg: #ffffff;
+  --color-input-border: #cbd5e1;
+  --color-input-focus: #3b82f6;
+  
+  /* Button styles */
+  --color-button-bg: #ffffff;
+  --color-button-text: #1e293b;
+  --color-button-hover: #f1f5f9;
+  --color-button-primary-bg: #1d4ed8;
+  --color-button-primary-hover: #1e40af;
+  
+  /* Code and syntax */
+  --color-code-bg: #f1f5f9;
+  --color-code-text: #334155;
+
+  /* Graph visualization */
+  --color-graph-bg: #f8fafc;
+}
+
+/* Dark theme variables */
+:root.dark-mode {
+  /* Main colors */
+  --color-primary: #3b82f6;
+  --color-primary-rgb: 59, 130, 246;
+  --color-primary-darker: #2563eb;
+  --color-secondary: #60a5fa;
+  --color-secondary-rgb: 96, 165, 250;
+  --color-accent: #a78bfa;
+  --color-accent-rgb: 167, 139, 250;
+  
+  /* Background colors */
+  --color-bg: #0f172a;
+  --color-bg-rgb: 15, 23, 42;
+  --color-content-bg: #1e293b;
+  --color-sidebar-bg: #0f172a;
+  
+  /* Text colors */
+  --color-text: #f8fafc;
+  --color-text-light: #f8fafc;
+  --color-text-muted: #94a3b8;
+  
+  /* Status colors */
+  --color-success: #34d399;
+  --color-error: #f87171;
+  --color-warning: #fbbf24;
+  --color-info: #60a5fa;
+  --color-info-rgb: 96, 165, 250;
+  
+  /* Border colors */
+  --color-border: #334155;
+  --color-border-light: #1e293b;
+  
+  /* Card, dropdown, and UI elements */
+  --color-card-bg: #1e293b;
+  --color-card-shadow: rgba(0, 0, 0, 0.25);
+  
+  --color-dropdown-bg: #1e293b;
+  --color-dropdown-hover: rgba(255, 255, 255, 0.05);
+  --color-dropdown-menu-bg: #0f172a;
+  --color-dropdown-item-hover: #1e293b;
+  --color-dropdown-item-active-bg: #1e40af;
+  
+  /* Form controls */
+  --color-input-bg: #0f172a;
+  --color-input-border: #334155;
+  --color-input-focus: #3b82f6;
+  
+  /* Button styles */
+  --color-button-bg: #1e293b;
+  --color-button-text: #f8fafc;
+  --color-button-hover: #334155;
+  --color-button-primary-bg: #2563eb;
+  --color-button-primary-hover: #1d4ed8;
+  
+  /* Code and syntax */
+  --color-code-bg: #0f172a;
+  --color-code-text: #e2e8f0;
+
+  /* Graph visualization */
+  --color-graph-bg: #0f172a;
+
+  /* Override color scheme for dark mode */
+  color-scheme: dark;
+}
+
+/* Default to system preference if neither class is set */
+@media (prefers-color-scheme: light) {
+  :root:not(.light-mode):not(.dark-mode) {
+    color-scheme: light;
+    /* Copy light mode variables here */
+    --color-primary: #1d4ed8;
+    --color-primary-rgb: 29, 78, 216;
+    --color-primary-darker: #1e40af;
+    --color-secondary: #3b82f6;
+    --color-secondary-rgb: 59, 130, 246;
+    --color-accent: #8b5cf6;
+    --color-accent-rgb: 139, 92, 246;
+    --color-bg: #f8fafc;
+    --color-content-bg: #ffffff;
+    --color-sidebar-bg: #f1f5f9;
+    --color-text: #1e293b;
+    --color-text-light: #f8fafc;
+    --color-text-muted: #64748b;
+    --color-success: #10b981;
+    --color-error: #ef4444;
+    --color-warning: #f59e0b;
+    --color-info: #3b82f6;
+    --color-info-rgb: 59, 130, 246;
+    --color-border: #e2e8f0;
+    --color-border-light: #f1f5f9;
+    --color-card-bg: #ffffff;
+    --color-card-shadow: rgba(0, 0, 0, 0.1);
+    --color-dropdown-bg: #1e40af;
+    --color-dropdown-hover: rgba(255, 255, 255, 0.1);
+    --color-dropdown-menu-bg: #ffffff;
+    --color-dropdown-item-hover: #f1f5f9;
+    --color-dropdown-item-active-bg: #eff6ff;
+    --color-input-bg: #ffffff;
+    --color-input-border: #cbd5e1;
+    --color-input-focus: #3b82f6;
+    --color-button-bg: #ffffff;
+    --color-button-text: #1e293b;
+    --color-button-hover: #f1f5f9;
+    --color-button-primary-bg: #1d4ed8;
+    --color-button-primary-hover: #1e40af;
+    --color-code-bg: #f1f5f9;
+    --color-code-text: #334155;
+    --color-graph-bg: #f8fafc;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light-mode):not(.dark-mode) {
+    color-scheme: dark;
+    /* Copy dark mode variables here */
+    --color-primary: #3b82f6;
+    --color-primary-rgb: 59, 130, 246;
+    --color-primary-darker: #2563eb;
+    --color-secondary: #60a5fa;
+    --color-secondary-rgb: 96, 165, 250;
+    --color-accent: #a78bfa;
+    --color-accent-rgb: 167, 139, 250;
+    --color-bg: #0f172a;
+    --color-bg-rgb: 15, 23, 42;
+    --color-content-bg: #1e293b;
+    --color-sidebar-bg: #0f172a;
+    --color-text: #f8fafc;
+    --color-text-light: #f8fafc;
+    --color-text-muted: #94a3b8;
+    --color-success: #34d399;
+    --color-error: #f87171;
+    --color-warning: #fbbf24;
+    --color-info: #60a5fa;
+    --color-info-rgb: 96, 165, 250;
+    --color-border: #334155;
+    --color-border-light: #1e293b;
+    --color-card-bg: #1e293b;
+    --color-card-shadow: rgba(0, 0, 0, 0.25);
+    --color-dropdown-bg: #1e293b;
+    --color-dropdown-hover: rgba(255, 255, 255, 0.05);
+    --color-dropdown-menu-bg: #0f172a;
+    --color-dropdown-item-hover: #1e293b;
+    --color-dropdown-item-active-bg: #1e40af;
+    --color-input-bg: #0f172a;
+    --color-input-border: #334155;
+    --color-input-focus: #3b82f6;
+    --color-button-bg: #1e293b;
+    --color-button-text: #f8fafc;
+    --color-button-hover: #334155;
+    --color-button-primary-bg: #2563eb;
+    --color-button-primary-hover: #1d4ed8;
+    --color-code-bg: #0f172a;
+    --color-code-text: #e2e8f0;
+    --color-graph-bg: #0f172a;
+  }
+}
+
+/* Apply base styles based on theme */
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  transition: background-color 0.3s ease, color 0.3s ease;
+  overflow: hidden; /* Prevent body scrolling */
+  height: 100vh;
+}
+
+/* Layout Styles */
+.layout-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background-color: var(--color-bg);
+  overflow: hidden;
+}
+
+.app-header {
+  background-color: var(--color-primary);
+  color: var(--color-text-light);
+  padding: 1rem;
+  box-shadow: 0 2px 4px var(--color-card-shadow);
+  height: 60px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+}
+
+.app-title {
+  font-size: 1.5rem;
+  font-weight: bold;
+}
+
+.main-content {
+  display: flex;
+  flex-grow: 1;
+  overflow: hidden;
+  height: calc(100vh - 60px);
+  position: relative;
+  top: 0;
+}
+
+.sidebar {
+  width: 320px;
+  background-color: var(--color-sidebar-bg);
+  box-shadow: 0 4px 6px var(--color-card-shadow);
+  overflow-y: auto;
+  height: 100%;
+  padding: 1rem;
+  box-sizing: border-box;
+}
+
+.content-area {
+  flex-grow: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+  background-color: var(--color-content-bg);
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.w-full {
+  margin-right: 1rem;
+}
+
+/* Card Styles */
+.card {
+  background-color: var(--color-card-bg);
+  border-radius: 8px;
+  box-shadow: 0 2px 4px var(--color-card-shadow);
+  margin-bottom: 20px;
+  overflow: hidden;
+  padding: 0;
+}
+
+.card > *:not(.graph-container-wrapper) {
+  padding: 16px;
+}
+
+.card-title {
+  padding: 16px;
+  margin: 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+/* Form Elements */
+.form-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 16px;
+}
+
+.form-group {
+  margin-bottom: 0.75rem;
+}
+
+.form-label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  margin-bottom: 0.25rem;
+}
+
+.form-input {
+  display: block;
+  width: 95%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-input-border);
+  border-radius: 0.375rem;
+  background-color: var(--color-input-bg);
+  color: var(--color-text);
+  box-shadow: 0 1px 2px var(--color-card-shadow);
+  font-size: 0.875rem;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--color-input-focus);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+}
+
+/* Buttons and Input Elements */
+input,
+button {
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--color-button-text);
+  background-color: var(--color-button-bg);
+  transition: border-color 0.25s, background-color 0.25s;
+  box-shadow: 0 2px 2px var(--color-card-shadow);
+  outline: none;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--color-primary);
+  background-color: var(--color-button-hover);
+}
+
+button:active {
+  border-color: var(--color-primary);
+  background-color: var(--color-button-hover);
+}
+
+/* Specific Button Styles */
+.button-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text-light);
+  background-color: var(--color-button-primary-bg);
+  border: 1px solid transparent;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.button-primary:hover {
+  background-color: var(--color-button-primary-hover);
+}
+
+.button-primary:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5);
+}
+
+.button-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Flex utilities */
+.flex {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.flex-col {
+  flex-direction: column;
+}
+
+.items-center {
+  align-items: center;
+}
+
+.justify-between {
+  justify-content: space-between;
+}
+
+/* Container Styles */
+.container {
+  margin: 0;
+  padding-top: 10vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+}
+
+.row {
+  display: flex;
+  justify-content: center;
+}
+
+/* Graph styles */
+.graph-container {
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  overflow: hidden;
+}
+
+.graph-container-wrapper {
+  position: relative;
+  width: 100%;
+  background-color: var(--color-graph-bg);
+  border-radius: 8px;
+}
+
+/* Status indicators */
+.status-neutral {
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.status-info {
+  color: var(--color-info);
+  font-weight: 500;
+}
+
+.status-success {
+  color: var(--color-success);
+  font-weight: 500;
+}
+
+.status-error {
+  color: var(--color-error);
+  font-weight: 500;
+}
+
+/* Text utilities */
+.text-default {
+  color: var(--color-text);
+}
+
+.text-muted {
+  color: var(--color-text-muted);
+}
+
+.text-light {
+  color: var(--color-text-light);
+}
+
+.text-brand {
+  color: var(--color-primary);
+}
+
+/* Link styles */
+a {
+  font-weight: 500;
+  color: var(--color-primary);
+  text-decoration: inherit;
+}
+
+a:hover {
+  color: var(--color-secondary);
+}
+
+/* Typography */
+h1 {
+  text-align: center;
+}
+
+/* Specific element styles */
+#greet-input {
+  margin-right: 5px;
+}
+
+/* Logo animations */
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: 0.75s;
+}
+
+.logo:hover {
+  filter: drop-shadow(0 0 2em var(--color-primary));
+}
+
+/* Info messages */
+.info-message {
+  display: flex;
+  align-items: center;
+  padding: 0.75rem;
+  background-color: rgba(var(--color-info-rgb), 0.1);
+  border: 1px solid var(--color-info);
+  border-radius: 0.375rem;
+  color: var(--color-info);
+  font-size: 0.875rem;
+} 
