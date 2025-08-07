@@ -54,7 +54,7 @@ To import data into the database, use the "Import" menu
 ### Standalone ingestions
 The bundled application uses rust components to conduct the enumerations. These components where first built as standalone tools and are available here:
 
-If you would like to create your own enumeration tool, you're free to do so, just make sure the output is compliant with the expected formats. You can find the neccessary formats here: 
+If you would like to create your own enumeration tool, you're free to do so, just make sure the output is compliant with the expected formats.
 
 ## Neo4j Backend
 Neo4j is used as a Database to hold all the enumerated data. below you can find a docker file to quickly spin up a neo4j Database. Usage of docker inside WSL is recommended.
