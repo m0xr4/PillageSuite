@@ -46,12 +46,12 @@ const props = defineProps({
 // Database stats
 const dbStats = ref([
   { label: 'Total Nodes', value: 0, type: 'node' },
-  { label: 'Identities', value: 0, type: 'identity' },
-  { label: 'Groups', value: 0, type: 'group' },
+  { label: 'Users', value: 0, type: 'User' },
+  { label: 'Groups', value: 0, type: 'Group' },
   { label: 'Shares', value: 0, type: 'share' },
   { label: 'Files', value: 0, type: 'file' },
   { label: 'Directories', value: 0, type: 'directory' },
-  { label: 'Computers', value: 0, type: 'computer' }
+  { label: 'Computers', value: 0, type: 'Computer' }
 ]);
 
 // Colors for stats cards
@@ -80,7 +80,7 @@ const fetchStats = async () => {
     
     // Get user count
     const usersResult = await executeCypherQuery(
-      'MATCH (u:Identity) RETURN count(u) as count',
+      'MATCH (u:User) RETURN count(u) as count',
       props.session
     );
     

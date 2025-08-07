@@ -119,9 +119,7 @@ const fetchChartData = async () => {
     // Get Share Permissions data
     const sharePermResult = await executeCypherQuery(
       `MATCH (s:share)
-       OPTIONAL MATCH (i:Identity)-[r]-(s)
-       WHERE i.name IN ["Everyone", "Authenticated Users", "BUILTIN\\\\Users"] 
-         AND type(r) IN ['FullControl', 'ReadData/ListDirectory', 'WriteData/AddFile']
+       OPTIONAL MATCH (i:Identity WHERE i.name IN ["Everyone", "Authenticated Users", "BUILTIN\\\\Users"] OR i.sid contains '-513')-[r]-(s)
        WITH s, count(i) > 0 AS hasInsecurePath
        WITH hasInsecurePath, count(s) AS shareCount
        RETURN hasInsecurePath, shareCount`,
