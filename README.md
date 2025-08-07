@@ -59,7 +59,7 @@ If you would like to create your own enumeration tool, you're free to do so, jus
 ## Neo4j Backend
 Neo4j is used as a Database to hold all the enumerated data. below you can find a docker file to quickly spin up a neo4j Database. Usage of docker inside WSL is recommended.
 If you do not use this configuration below, make sure your neo4j instance has the apoc plugin installed.
-Username and password for the access is controlled with this line: NEO4J_AUTH=<username>/<your_password>
+Username and password for the access is controlled with this line: ```NEO4J_AUTH=<username>/<your_password>```
 ```
 version: "3.8"
 
