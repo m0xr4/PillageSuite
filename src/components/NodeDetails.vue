@@ -140,11 +140,11 @@ const formatValue = (value) => {
 // Run a predefined query
 const runQuery = (cypher) => {
   if (props.nodeData && props.nodeData.id) {
-    // Replace $nodeId parameter with the actual node ID
-    const formattedQuery = cypher.replace('$nodeId', props.nodeData.id);
+    // Replace $nodeSID parameter with the actual node SID
+    const formattedQuery = cypher.replace('$nodeSID', `"${props.nodeData.properties.sid}"`);
     
-    // Pass a second parameter to indicate this should behave like an expansion
-    emit('runQuery', formattedQuery, true);
+    // Pass a second parameter to indicate this should not behave like an expansion
+    emit('runQuery', formattedQuery, false);
   }
 };
 </script>

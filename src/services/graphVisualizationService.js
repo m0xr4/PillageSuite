@@ -241,13 +241,29 @@ export const applyGraphLayout = (cy) => {
 
 
 // Generate Cypher query for node expansion
-export const generateNodeExpansionQuery = (nodeId, onlyBasicACLs = true) => {
+export const generateNodeExpansionQuery = (nodeId, onlyBasicACLs = true, nodeData = null) => {
+  // Check if this is an Identity node
+  const isIdentityNode = nodeData && 
+                        nodeData.labels && 
+                        nodeData.labels.includes('Identity');
+
+  if (isIdentityNode) {
+    // Special query for Identity nodes - expand to show group memberships and permissions
+    return `
+      MATCH p=(n)-[r]-(related)
+      WHERE (id(n) = ${nodeId} OR n.id = "${nodeId}")
+      AND type(r) IN ["MEMBER_OF"]
+      RETURN p limit 250
+    `;
+  }
+
+  // Standard expansion query for non-Identity nodes
   if (onlyBasicACLs) {
     // Filter relationships to only include basic ACL types
     return `
       MATCH p=(n)-[r]-(related)
       WHERE (id(n) = ${nodeId} OR n.id = "${nodeId}")
-      AND type(r) IN ["FullControl", "Modify", "ReadAndExecute", "ReadAndWrite", "Read", "Write", "ReadData/ListDirectory", "MEMBER_OF"]
+      AND type(r) IN ["FullControl", "Modify", "ReadAndExecute", "ReadAndWrite", "Read", "Write", "ReadData/ListDirectory"]
       RETURN p limit 250
     `;
   } else {
@@ -264,12 +280,13 @@ export const generateNodeExpansionQuery = (nodeId, onlyBasicACLs = true) => {
 export const limitGraphData = (graphData, threshold, isExpandOperation = false, selectedNodeData = null) => {
   if (!graphData) return { nodes: [], edges: [] };
   
-  const totalElements = graphData.nodes.length + graphData.edges.length;
-  if (totalElements <= threshold) {
+  // Only count nodes toward the threshold, not edges
+  const nodeCount = graphData.nodes.length;
+  if (nodeCount <= threshold) {
     return graphData; // No need to limit
   }
   
-  console.log(`Limiting graph data from ${totalElements} to ${threshold} elements`);
+  console.log(`Limiting graph data from ${nodeCount} nodes to ${threshold} nodes`);
   
   // When expanding a node, make sure to keep the source node and its immediate connections
   if (isExpandOperation && selectedNodeData) {
@@ -307,72 +324,70 @@ export const limitGraphData = (graphData, threshold, isExpandOperation = false, 
       }
     });
     
-    // Calculate how many more nodes we can include
-    const spaceForRemainingNodes = Math.max(0, threshold - prioritizedNodes.length - connectedEdges.length);
-    const additionalNodes = remainingNodes.slice(0, spaceForRemainingNodes);
-    
-    // Combine prioritized and additional nodes
-    const limitedNodes = [...prioritizedNodes, ...additionalNodes];
-    
-    // Get all valid edges (connecting nodes that are kept)
-    const nodeIdSet = new Set(limitedNodes.map(n => n.id));
-    
-    // Keep all edges connected to the source node, then add other valid edges up to the limit
-    const prioritizedEdges = graphData.edges.filter(edge => 
-      edge.source === sourceNodeId || edge.target === sourceNodeId
-    );
-    
-    const remainingEdges = graphData.edges.filter(edge => 
-      edge.source !== sourceNodeId && 
-      edge.target !== sourceNodeId &&
-      nodeIdSet.has(edge.source) && 
-      nodeIdSet.has(edge.target)
-    );
-    
-    const spaceForRemainingEdges = Math.max(0, threshold - limitedNodes.length - prioritizedEdges.length);
-    const limitedEdges = [
-      ...prioritizedEdges,
-      ...remainingEdges.slice(0, spaceForRemainingEdges)
-    ];
+         // Calculate how many more nodes we can include
+     const spaceForRemainingNodes = Math.max(0, threshold - prioritizedNodes.length);
+     const additionalNodes = remainingNodes.slice(0, spaceForRemainingNodes);
+     
+     // Combine prioritized and additional nodes
+     const limitedNodes = [...prioritizedNodes, ...additionalNodes];
+     
+     // Get all valid edges (connecting nodes that are kept)
+     const nodeIdSet = new Set(limitedNodes.map(n => n.id));
+     
+     // Keep all edges that connect the remaining nodes
+     const limitedEdges = graphData.edges.filter(edge => 
+       nodeIdSet.has(edge.source) && nodeIdSet.has(edge.target)
+     );
     
     console.log(`Limited to ${limitedNodes.length} nodes and ${limitedEdges.length} edges`);
     return { nodes: limitedNodes, edges: limitedEdges };
   }
   
   // Standard limiting logic for non-expansion operations
-  const limitedNodes = [...graphData.nodes];
-  const limitedEdges = [...graphData.edges];
+  // Only limit nodes, edges will be filtered to only connect remaining nodes
   
-  // Calculate how many elements we need to remove
-  let elementsToRemove = totalElements - threshold;
+  // Start with all nodes
+  let limitedNodes = [...graphData.nodes];
   
-  // Remove edges first, but keep at least one edge per node
-  if (elementsToRemove > 0 && limitedEdges.length > 0) {
-    // Calculate how many edges we can safely remove
-    const maxEdgesToRemove = Math.min(elementsToRemove, limitedEdges.length - limitedNodes.length);
-    if (maxEdgesToRemove > 0) {
-      limitedEdges.splice(-maxEdgesToRemove);
-      elementsToRemove -= maxEdgesToRemove;
-    }
-  }
+  // Calculate how many nodes we need to remove
+  let nodesToRemove = nodeCount - threshold;
   
-  // If we still need to remove elements, remove nodes
-  if (elementsToRemove > 0 && limitedNodes.length > 0) {
-    // Calculate how many nodes we can safely remove
-    const maxNodesToRemove = Math.min(elementsToRemove, limitedNodes.length - 1);
+  if (nodesToRemove > 0) {
+    // Create a map of node degrees (how many edges each node has)
+    const nodeDegrees = new Map();
+    graphData.edges.forEach(edge => {
+      nodeDegrees.set(edge.source, (nodeDegrees.get(edge.source) || 0) + 1);
+      nodeDegrees.set(edge.target, (nodeDegrees.get(edge.target) || 0) + 1);
+    });
+    
+    // Initialize degrees for nodes with no edges
+    limitedNodes.forEach(node => {
+      if (!nodeDegrees.has(node.id)) {
+        nodeDegrees.set(node.id, 0);
+      }
+    });
+    
+    // Sort nodes by degree (lowest first for removal)
+    limitedNodes.sort((a, b) => {
+      const aDegree = nodeDegrees.get(a.id) || 0;
+      const bDegree = nodeDegrees.get(b.id) || 0;
+      return aDegree - bDegree;
+    });
+    
+    // Remove nodes from the beginning (lowest degree nodes)
+    const maxNodesToRemove = Math.min(nodesToRemove, limitedNodes.length - 1);
     if (maxNodesToRemove > 0) {
-      limitedNodes.splice(-maxNodesToRemove);
+      limitedNodes.splice(0, maxNodesToRemove);
     }
   }
   
-  // ALWAYS ensure we only keep edges that connect remaining nodes
-  // This needs to happen regardless of whether we removed nodes or just edges
+  // Get all valid edges (connecting nodes that are kept)
   const remainingNodeIds = new Set(limitedNodes.map(node => node.id));
-  const validEdges = limitedEdges.filter(edge => 
+  const limitedEdges = graphData.edges.filter(edge => 
     remainingNodeIds.has(edge.source) && remainingNodeIds.has(edge.target)
   );
   
-  return { nodes: limitedNodes, edges: validEdges };
+  return { nodes: limitedNodes, edges: limitedEdges };
 };
 
 // Process query results and update graph with large graph safeguards

@@ -126,6 +126,22 @@ const handleSavedQueryRun = async (query) => {
   }, 50);
 };
 
+// Handle query from NodeDetails
+const handleNodeDetailsQuery = async (query, isExpansion = false) => {
+  console.log("Running NodeDetails query:", query);
+  
+  // Force a complete reset of all visualization state before running the query
+  queryResults.value = null;
+  
+  // Use a small delay to allow state to reset properly
+  setTimeout(async () => {
+    // Use the exposed method from the CypherQueryEditor component
+    if (queryEditorRef.value) {
+      await queryEditorRef.value.runExternalQuery(query);
+    }
+  }, 50);
+};
+
 // Handle query error
 const handleQueryError = (error) => {
   console.error("Query error:", error);
@@ -322,6 +338,7 @@ const handleStatsRefresh = () => {
         
         <GraphVisualization 
           :results="queryResults" 
+          @nodeDetailsQuery="handleNodeDetailsQuery"
         />
       </div>
     </template>

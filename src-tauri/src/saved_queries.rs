@@ -54,8 +54,12 @@ impl Default for QueriesConfig {
                     cypher: "MATCH (a:file where a.extension =~ '^(doc|docx|xls|xlsx|ppt|pptx|pdf)$') RETURN a.name as Name,a.size as Size,a.extension as Extension,a.full_path as Path".to_string(),
                 },
                 Query {
-                    name: "Interesting Paths to Shares for ALL".to_string(),
-                    cypher: "MATCH p=(i:Identity)-[r]-(s:share) WHERE i.name IN [\"Everyone\", \"Authenticated Users\", \"BUILTIN\\\\Users\"] AND type(r) IN ['FullControl', 'ReadData/ListDirectory', '`WriteData/AddFile'] RETURN p".to_string(),
+                    name: "Interesting Paths to Shares for low privilege groups".to_string(),
+                    cypher: "MATCH p=(i:Identity WHERE i.name IN ['Everyone', 'Authenticated Users', 'BUILTIN\\Users'] OR i.sid contains '-513')-[r]-(s:share) where type(r) IN ['FullControl', 'ReadData/ListDirectory', 'WriteData/AddFile'] RETURN p".to_string(),
+                },
+                Query {
+                    name: "Get ACLs of low privilege groups to Shares".to_string(),
+                    cypher: "MATCH (i:Identity)-[r]-(s:share) WHERE i.name IN ['Everyone', 'Authenticated Users', 'BUILTIN\\Users'] OR i.sid contains '-513' RETURN s.name AS ShareName, i.name AS Identity, collect(type(r)) AS Permissions ORDER BY ShareName, Identity".to_string(),
                 },
                 Query {
                     name: "Search POS System Files".to_string(),
@@ -70,7 +74,7 @@ impl Default for QueriesConfig {
                 // Identity-specific predefined queries
                 Query {
                     name: "Path to Password Files".to_string(),
-                    cypher: "MATCH p=(i:Identity WHERE id(i) = $nodeId)-[*]->(a:file) 
+                    cypher: "MATCH p=(i:Identity WHERE i.sid = $nodeSID)-[*]->(a:file) 
     WHERE toLower(a.name) =~ '.*passw.*|.*unattend.*|.*zugang.*|.*login.*|.*zugriff.*|.*credential.*' 
     AND any(r IN relationships(p) WHERE type(r) IN ['ReadData/ListDirectory', 'Read', 'ReadAndExecute', 'ReadAndWrite', 'Modify', 'FullControl', 'GenericRead', 'GenericAll'])
     RETURN p".to_string(),
@@ -78,7 +82,7 @@ impl Default for QueriesConfig {
                 Query {
                     name: "Write Access to Executables".to_string(),
                     cypher: "
-                        MATCH p=(i:Identity WHERE id(i) = $nodeId)-[*]->(a:file)
+                        MATCH p=(i:Identity WHERE i.sid = $nodeSID)-[*]->(a:file)
                         WHERE a.extension IN ['exe', 'dll', 'bat', 'cmd', 'ps1', 'vbs', 'hta', 'msi', 'com', 'scr', 'cpl']
                         AND any(r IN relationships(p) WHERE type(r) IN ['WriteData/AddFile', 'AppendData/AddSubdirectory', 'WriteExtendedAttributes', 'WriteAttributes', 'WriteOwner', 'WriteDAC', 'FullControl', 'Modify', 'ReadAndWrite', 'Write', 'GenericWrite', 'GenericAll'])
                         RETURN p
@@ -87,15 +91,15 @@ impl Default for QueriesConfig {
                 Query {
                     name: "Find Accessible Shares".to_string(),
                     cypher: "
-                    MATCH p=(i:Identity WHERE id(i) = $nodeId)-[*]->(a:share) 
+                    MATCH p=(i:Identity WHERE i.sid = $nodeSID)-[*]->(a:share) 
                     WHERE any(r IN relationships(p) WHERE type(r) IN ['ReadData/ListDirectory', 'Read', 'ReadAndExecute', 'ReadAndWrite', 'Modify', 'FullControl', 'GenericRead', 'GenericAll'])
                     RETURN p".to_string(),
                 },
                 Query {
                     name: "Show associated Identities".to_string(),
                     cypher: "
-                    MATCH (i:Identity WHERE id(i) = $nodeId)-[*]->(a:Identity)
-                    RETURN i, a
+                    MATCH p=(i:Identity WHERE i.sid = $nodeSID)-[:MEMBER_OF]-(a:Identity)
+                    RETURN p
                     ".to_string(),
                 },
                 

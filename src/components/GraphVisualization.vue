@@ -528,14 +528,14 @@ const processResults = (results, isExpansion = false) => {
     return;
   }
   
-  // Check if graph exceeds threshold
-  if ((graphData.nodes.length + graphData.edges.length) > LARGE_GRAPH_THRESHOLD) {
+  // Check if graph exceeds threshold (only count nodes)
+  if (graphData.nodes.length > LARGE_GRAPH_THRESHOLD) {
     // Store data for large graph warning
     pendingGraphData.value = graphData;
     isExpandOperation.value = isExpansion;
     
     // Show warning dialog
-    warningMessage.value = `This operation will visualize ${graphData.nodes.length} nodes and ${graphData.edges.length} edges (${graphData.nodes.length + graphData.edges.length} total elements), which may cause performance issues. Do you want to proceed?`;
+    warningMessage.value = `This operation will visualize ${graphData.nodes.length} nodes and ${graphData.edges.length} edges, which may cause performance issues. Do you want to proceed?`;
     showWarningDialog.value = true;
     return;
   }
@@ -571,7 +571,7 @@ const expandNode = async (nodeData) => {
   
   // Get the node ID and generate query
   const nodeId = nodeData.id;
-  const cypher = generateNodeExpansionQuery(nodeId, onlyBasicACLs.value);
+  const cypher = generateNodeExpansionQuery(nodeId, onlyBasicACLs.value, nodeData);
   
   try {
     // Execute the query
@@ -590,24 +590,14 @@ const expandNode = async (nodeData) => {
   }
 };
 
+const emit = defineEmits(['nodeDetailsQuery']);
+
 // Handle query from NodeDetails
 const handleNodeDetailsQuery = (query, isExpansion = false) => {
   console.log(`Running query from NodeDetails (isExpansion: ${isExpansion})`, query);
   
-  // Execute the query and process the results
-  executeCypherQuery(query)
-    .then(results => {
-      // Set a flag to indicate this is from a saved query
-      if (results && results.summary) {
-        results.summary.fromSavedQuery = true;
-      }
-      
-      // Process the results with expansion flag
-      processResults(results, isExpansion);
-    })
-    .catch(error => {
-      console.error("Error executing node details query:", error);
-    });
+  // Emit the query to the parent component (App.vue) to handle through the proper flow
+  emit('nodeDetailsQuery', query, isExpansion);
 };
 
 // Set up graph events
