@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::Utc;
+use regex::{Captures, Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Window};
 
@@ -82,7 +83,40 @@ fn read_lines(filename: &str) -> Result<Vec<String>, String> {
     Ok(lines)
 }
 
-fn search_file(file_path: &str, search_strings: &[String]) -> Result<Vec<String>, String> {
+fn build_case_insensitive_regexes_from_raw(search_strings: &[String]) -> Vec<Regex> {
+    search_strings
+        .iter()
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| {
+            let pattern = regex::escape(s);
+            RegexBuilder::new(&pattern)
+                .case_insensitive(true)
+                .build()
+                .ok()
+        })
+        .collect()
+}
+
+fn build_case_insensitive_regexes_from_escaped(search_strings: &[String]) -> Vec<Regex> {
+    search_strings
+        .iter()
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| {
+            let escaped_search = html_escape(s);
+            let pattern = regex::escape(&escaped_search);
+            RegexBuilder::new(&pattern)
+                .case_insensitive(true)
+                .build()
+                .ok()
+        })
+        .collect()
+}
+
+fn search_file(
+    file_path: &str,
+    raw_regexes: &[Regex],
+    escaped_regexes: &[Regex],
+) -> Result<Vec<String>, String> {
     let file = File::open(file_path)
         .map_err(|e| format!("Failed to open file {}: {}", file_path, e))?;
     let reader = BufReader::new(file);
@@ -96,13 +130,13 @@ fn search_file(file_path: &str, search_strings: &[String]) -> Result<Vec<String>
     let mut hits = Vec::new();
 
     for (line_num, line) in lines.iter().enumerate() {
-        // Look for any search string in this line
-        if search_strings.iter().any(|s| line.contains(s)) {
+        // Look for any search string in this line (case-insensitive)
+        if raw_regexes.iter().any(|re| re.is_match(line)) {
                 let mut context = String::new();
                 
             // Line before
                 if line_num > 0 {
-                    let before_line = highlight_search_strings(&lines[line_num - 1], search_strings);
+                    let before_line = highlight_search_strings(&lines[line_num - 1], &escaped_regexes);
                     context.push_str(&format!(
                         "<div class=\"line line-before\"><span class=\"line-number\">{}</span>{}</div>",
                         line_num,
@@ -111,7 +145,7 @@ fn search_file(file_path: &str, search_strings: &[String]) -> Result<Vec<String>
                 }
                 
             // Hit line
-                let highlighted_line = highlight_search_strings(line, search_strings);
+                let highlighted_line = highlight_search_strings(line, &escaped_regexes);
                 context.push_str(&format!(
                 "<div class=\"line line-hit\"><span class=\"line-number\">{}</span>{} <span class=\"hit-marker\"></span></div>",
                     line_num + 1,
@@ -120,7 +154,7 @@ fn search_file(file_path: &str, search_strings: &[String]) -> Result<Vec<String>
                 
             // Line after
             if line_num + 1 < lines.len() {
-                    let after_line = highlight_search_strings(&lines[line_num + 1], search_strings);
+                    let after_line = highlight_search_strings(&lines[line_num + 1], &escaped_regexes);
                     context.push_str(&format!(
                         "<div class=\"line line-after\"><span class=\"line-number\">{}</span>{}</div>",
                         line_num + 2,
@@ -316,14 +350,17 @@ fn html_escape(text: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-fn highlight_search_strings(line: &str, search_strings: &[String]) -> String {
+fn highlight_search_strings(line: &str, escaped_case_insensitive_regexes: &[Regex]) -> String {
     let mut highlighted_line = html_escape(line);
-    for s in search_strings {
-        let escaped = html_escape(s);
-        if highlighted_line.contains(&escaped) {
-            let replacement = format!("<span class=\"highlight\">{}</span>", escaped);
-            highlighted_line = highlighted_line.replace(&escaped, &replacement);
-        }
+    for regex in escaped_case_insensitive_regexes {
+        highlighted_line = regex
+            .replace_all(&highlighted_line, |caps: &Captures| {
+                format!(
+                    "<span class=\"highlight\">{}</span>",
+                    caps.get(0).map(|m| m.as_str()).unwrap_or("")
+                )
+            })
+            .into_owned();
     }
     highlighted_line
 }
@@ -366,6 +403,10 @@ pub async fn start_credential_gathering(window: Window, config: CredGatherConfig
     search_strings.retain(|s| seen.insert(s.clone()));
     send_log_message(&window, format!("Loaded {} unique search strings", search_strings.len()));
 
+    // Precompile regexes once per run for performance
+    let raw_regexes = build_case_insensitive_regexes_from_raw(&search_strings);
+    let escaped_regexes = build_case_insensitive_regexes_from_escaped(&search_strings);
+
     let file_paths = match read_lines(&config.file_list) {
         Ok(v) => v,
         Err(e) => {
@@ -394,7 +435,7 @@ pub async fn start_credential_gathering(window: Window, config: CredGatherConfig
             break;
         }
 
-        match search_file(&file_path, &search_strings) {
+        match search_file(&file_path, &raw_regexes, &escaped_regexes) {
             Ok(hits) => {
                 if !hits.is_empty() {
                     send_log_message(&window, format!("[+] Hits in: {} ({} matches)", file_path, hits.len()));
