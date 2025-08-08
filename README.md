@@ -23,7 +23,7 @@ Pillage Suite enumerates and indexes effective permissions on content within SMB
 
 
 ## Build Instructions
-The current standalone .exe release can be found here: https://github.com/m0xr4/PillageSuite/releases
+Compiled releases can be found here: https://github.com/m0xr4/PillageSuite/releases
 
 ### Install dependencies
   ```
