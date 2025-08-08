@@ -43,6 +43,8 @@ npm run tauri dev
 ## Usage
 For documentation about the tool, please consult the wiki: https://github.com/m0xr4/PillageSuite/wiki
 
+You need a neo4j Instace as DB, look here for a ready to deploy docker config: https://github.com/m0xr4/PillageSuite/wiki/Data-Imports#neo4j-backend
+
 
 ## Disclaimer
 
