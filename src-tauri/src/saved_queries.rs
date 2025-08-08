@@ -31,27 +31,27 @@ impl Default for QueriesConfig {
                 },
                 Query {
                     name: "Search Scripts".to_string(),
-                    cypher: "MATCH (a:file where a.extension =~ '^(sql|cmd|bat|ps1|vbs|hta)$') RETURN a.name as Name,a.size as Size,a.extension as Extension,a.full_path as Path".to_string(),
+                    cypher: "MATCH (a:file WHERE a.extension IN ['sql','cmd','bat','ps1','vbs','hta']) RETURN a.name as Name,a.size as Size,a.extension as Extension,a.full_path as Path".to_string(),
                 },
                 Query {
                     name: "Search Key/Cert Files".to_string(),
-                    cypher: "MATCH (a:file where a.extension =~ '^(key|crt|cer|pfx|p12|pem|csr|p7b|p7c|p7r|p7s)$') RETURN a.name as Name,a.size as Size,a.extension as Extension,a.full_path as Path".to_string(),
+                    cypher: "MATCH (a:file WHERE a.extension IN ['key','crt','cer','pfx','p12','pem','csr','p7b','p7c','p7r','p7s']) RETURN a.name as Name,a.size as Size,a.extension as Extension,a.full_path as Path".to_string(),
                 },
                 Query {
                     name: "Search Config Files".to_string(),
-                    cypher: "MATCH (a:file where a.extension =~ '^(cfg|conf|ini|xml|json|yaml|yml|properties|toml|hocon|env|sh|bash|zsh|config|tcsh|csh)$') RETURN a.name as Name,a.size as Size,a.extension as Extension,a.full_path as Path".to_string(),
+                    cypher: "MATCH (a:file WHERE a.extension IN ['cfg','conf','ini','xml','json','yaml','yml','properties','toml','hocon','env','sh','bash','zsh','config','tcsh','csh']) RETURN a.name as Name,a.size as Size,a.extension as Extension,a.full_path as Path".to_string(),
                 },
                 Query {
                     name: "Search VM Files".to_string(),
-                    cypher: "MATCH (a:file where a.extension =~ '^(vmx|vmdk|vmsd|vmsn|vmss|vmxf|vmxh|vmxw|vhdx|vhdi|vhd|vhdx|vdi|vdi)$') RETURN a.name as Name,a.size as Size,a.extension as Extension,a.full_path as Path".to_string(),
+                    cypher: "MATCH (a:file WHERE a.extension IN ['vmx','vmdk','vmsd','vmsn','vmss','vmxf','vmxh','vmxw','vhdx','vhdi','vhd','vdi']) RETURN a.name as Name,a.size as Size,a.extension as Extension,a.full_path as Path".to_string(),
                 },
                 Query {
                     name: "Search Webroots".to_string(),
-                    cypher: "MATCH (a:file where a.extension =~ '^(aspx|asp|php|jsp|html|htm)$') RETURN a.name as Name,a.size as Size,a.extension as Extension,a.full_path as Path".to_string(),
+                    cypher: "MATCH (a:file WHERE a.extension IN ['aspx','asp','php','jsp','html','htm']) RETURN a.name as Name,a.size as Size,a.extension as Extension,a.full_path as Path".to_string(),
                 },
                 Query {
                     name: "Search Common Documents".to_string(),
-                    cypher: "MATCH (a:file where a.extension =~ '^(doc|docx|xls|xlsx|ppt|pptx|pdf)$') RETURN a.name as Name,a.size as Size,a.extension as Extension,a.full_path as Path".to_string(),
+                    cypher: "MATCH (a:file WHERE a.extension IN ['doc','docx','xls','xlsx','ppt','pptx','pdf']) RETURN a.name as Name,a.size as Size,a.extension as Extension,a.full_path as Path".to_string(),
                 },
                 Query {
                     name: "Interesting Paths to Shares for low privilege groups".to_string(),
@@ -63,7 +63,7 @@ impl Default for QueriesConfig {
                 },
                 Query {
                     name: "Search POS System Files".to_string(),
-                    cypher: "MATCH (a:file) WHERE a.extension =~ '^(csv|txt|log|db|mdb|sqlite|pos|rpt|json|xml)$' AND toLower(a.name) =~ '.*pos.*|.*receipt.*|.*transaction.*|.*payment.*|.*terminal.*|.*checkout.*|.*invoice.*|.*retail.*|.*sale.*|.*register.*|.*lightspeed.*|.*square.*|.*shopify.*|.*clover.*|.*aloha.*|.*faktur.*|.*x3000.*|.*kasse.*' RETURN a.name as Name, a.size as Size, a.extension as Extension, a.full_path as Path".to_string(),
+                    cypher: "MATCH (a:file) WHERE a.extension IN ['csv','txt','log','db','mdb','sqlite','pos','rpt','json','xml'] AND toLower(a.name) =~ '.*pos.*|.*receipt.*|.*transaction.*|.*payment.*|.*terminal.*|.*checkout.*|.*invoice.*|.*retail.*|.*sale.*|.*register.*|.*lightspeed.*|.*square.*|.*shopify.*|.*clover.*|.*aloha.*|.*faktur.*|.*x3000.*|.*kasse.*' RETURN a.name as Name, a.size as Size, a.extension as Extension, a.full_path as Path".to_string(),
                 },
                 Query {
                     name: "Search for PII Documents".to_string(),

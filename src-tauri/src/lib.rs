@@ -3,6 +3,7 @@ mod json_importer;
 mod saved_queries;
 mod active_index_shares;
 mod active_index_ldap;
+mod gather_credz;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -17,7 +18,9 @@ pub fn run() {
             saved_queries::add_user_query,
             saved_queries::delete_user_query,
             active_index_shares::start_active_indexing,
-            active_index_ldap::start_ldap_enumeration
+            active_index_ldap::start_ldap_enumeration,
+            gather_credz::start_credential_gathering,
+            gather_credz::abort_credential_gathering
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

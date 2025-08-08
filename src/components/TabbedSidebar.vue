@@ -27,8 +27,13 @@
         <slot name="active-index-tab"></slot>
       </div>
 
-      <!-- About Tab -->
+      <!-- Credential Gathering Tab -->
       <div v-show="activeTab === 5" class="tab-panel">
+        <slot name="credential-gathering-tab"></slot>
+      </div>
+
+      <!-- About Tab -->
+      <div v-show="activeTab === 6" class="tab-panel">
         <slot name="about-tab"></slot>
       </div>
     </div>

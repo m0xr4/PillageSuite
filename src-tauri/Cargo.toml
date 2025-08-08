@@ -1,6 +1,6 @@
 [package]
 name = "pillagesuite"
-version = "0.1.0"
+version = "0.1.1"
 description = "Pillage Suite"
 authors = ["M.Rauch"]
 edition = "2021"

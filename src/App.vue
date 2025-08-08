@@ -12,6 +12,7 @@ import SavedQueries from "./components/SavedQueries.vue";
 import StatsView from "./components/StatsView.vue";
 import StatsCharts from "./components/StatsCharts.vue";
 import ActiveIndex from "./components/ActiveIndex.vue";
+import CredentialGathering from "./components/CredentialGathering.vue";
 import AboutView from "./components/AboutView.vue";
 
 // Neo4j connection state
@@ -44,6 +45,14 @@ const selectedOperation = ref(null);
 // Handle operation selection
 const handleOperationSelect = (index) => {
   selectedOperation.value = index;
+};
+
+// Selected operation for Credential Gathering
+const selectedCredentialOperation = ref(null);
+
+// Handle credential operation selection
+const handleCredentialOperationSelect = (index) => {
+  selectedCredentialOperation.value = index;
 };
 
 // Check if the result contains only paths
@@ -267,6 +276,15 @@ const handleStatsRefresh = () => {
           />
         </template>
 
+        <!-- Credential Gathering Tab -->
+        <template #credential-gathering-tab>
+          <CredentialGathering 
+            :mainContentOnly="false" 
+            :selectedOperation="selectedCredentialOperation"
+            @select="handleCredentialOperationSelect"
+          />
+        </template>
+
         <!-- About Tab -->
         <template #about-tab>
           <div class="info-box">
@@ -304,9 +322,17 @@ const handleStatsRefresh = () => {
         @select="handleOperationSelect"
       />
 
+      <!-- Show CredentialGathering when Credential Gathering tab is active -->
+      <CredentialGathering
+        v-else-if="activeTab === 5"
+        :mainContentOnly="true"
+        :selectedOperation="selectedCredentialOperation"
+        @select="handleCredentialOperationSelect"
+      />
+
       <!-- Show About when About tab is active -->
       <AboutView 
-        v-else-if="activeTab === 5"
+        v-else-if="activeTab === 6"
       />
       
       <!-- Show regular content for other tabs -->

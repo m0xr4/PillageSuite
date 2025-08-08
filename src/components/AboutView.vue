@@ -42,7 +42,7 @@
     
     <section class="about-section">
       <h2>Version</h2>
-      <p>0.1.0</p>
+      <p>0.1.1</p>
     </section>
   </div>
 </template>
