@@ -3,6 +3,28 @@
 version = 4
 
 [[package]]
+name = "PillageSuite"
+version = "0.1.2"
+dependencies = [
+ "aho-corasick",
+ "chrono",
+ "futures",
+ "ldap3",
+ "neo4rs",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-opener",
+ "tokio",
+ "windows",
+ "zip",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3140,28 +3162,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
 dependencies = [
  "siphasher 1.0.1",
-]
-
-[[package]]
-name = "pillagesuite"
-version = "0.1.1"
-dependencies = [
- "aho-corasick",
- "chrono",
- "futures",
- "ldap3",
- "neo4rs",
- "once_cell",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-opener",
- "tokio",
- "windows",
- "zip",
 ]
 
 [[package]]
