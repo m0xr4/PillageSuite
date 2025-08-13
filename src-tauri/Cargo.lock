@@ -3146,12 +3146,12 @@ dependencies = [
 name = "pillagesuite"
 version = "0.1.1"
 dependencies = [
+ "aho-corasick",
  "chrono",
  "futures",
  "ldap3",
  "neo4rs",
  "once_cell",
- "regex",
  "serde",
  "serde_json",
  "tauri",

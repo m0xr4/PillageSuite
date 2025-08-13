@@ -277,7 +277,7 @@ const config = ref({
 // Query edit toggles and text
 const editFileQueryEnabled = ref(false);
 const editStringQueryEnabled = ref(false);
-const fileQueryText = ref("MATCH (n:file) WHERE n.extension IN ['cmd', 'bat', 'ps1', 'vbs', 'hta', 'com', 'config', 'cfg', 'conf', 'ini', 'json', 'xml', 'yaml', 'yml', 'toml'] AND n.size < 5242880 RETURN n.full_path AS path");
+const fileQueryText = ref("MATCH (n:file) WHERE n.extension IN ['cmd', 'bat', 'ps1', 'vbs', 'hta', 'com', 'config', 'cfg', 'conf', 'ini', 'json', 'xml', 'yaml', 'yml', 'toml'] AND n.size < 15728640 RETURN n.full_path AS path");
 const stringQueryText = ref('MATCH (n:User) WHERE size(n.sam_account_name) >= 3 RETURN n.sam_account_name AS name');
 
 // Execution state
@@ -388,7 +388,7 @@ const runCreateFileList = async () => {
   try {
     logs.value.push('Running Cypher to fetch file paths...');
     // Use label 'file' (as used by importer and index) and alias the return value
-    const cypher = editFileQueryEnabled.value ? fileQueryText.value : "MATCH (n:file) WHERE n.extension IN ['cmd', 'bat', 'ps1', 'vbs', 'hta', 'com', 'config', 'cfg', 'conf', 'ini', 'json', 'xml', 'yaml', 'yml', 'toml'] AND n.size < 5242880 RETURN n.full_path AS path";
+    const cypher = editFileQueryEnabled.value ? fileQueryText.value : "MATCH (n:file) WHERE n.extension IN ['cmd', 'bat', 'ps1', 'vbs', 'hta', 'com', 'config', 'cfg', 'conf', 'ini', 'json', 'xml', 'yaml', 'yml', 'toml'] AND n.size < 15728640 RETURN n.full_path AS path";
     const result = await executeCypherQuery(cypher);
 
     const paths = (result?.records || [])

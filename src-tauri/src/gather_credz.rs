@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::Utc;
-use regex::{Captures, Regex, RegexBuilder};
+use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Window};
 
@@ -83,40 +83,15 @@ fn read_lines(filename: &str) -> Result<Vec<String>, String> {
     Ok(lines)
 }
 
-fn build_case_insensitive_regexes_from_raw(search_strings: &[String]) -> Vec<Regex> {
-    search_strings
-        .iter()
-        .filter(|s| !s.is_empty())
-        .filter_map(|s| {
-            let pattern = regex::escape(s);
-            RegexBuilder::new(&pattern)
-                .case_insensitive(true)
-                .build()
-                .ok()
-        })
-        .collect()
+fn build_automaton(patterns: &[String]) -> Result<AhoCorasick, String> {
+    let mut builder = AhoCorasickBuilder::new();
+    builder.match_kind(MatchKind::LeftmostLongest);
+    // Always use ASCII case-insensitive matching
+    builder.ascii_case_insensitive(true);
+    builder.build(patterns).map_err(|e| format!("Failed to build search automaton: {}", e))
 }
 
-fn build_case_insensitive_regexes_from_escaped(search_strings: &[String]) -> Vec<Regex> {
-    search_strings
-        .iter()
-        .filter(|s| !s.is_empty())
-        .filter_map(|s| {
-            let escaped_search = html_escape(s);
-            let pattern = regex::escape(&escaped_search);
-            RegexBuilder::new(&pattern)
-                .case_insensitive(true)
-                .build()
-                .ok()
-        })
-        .collect()
-}
-
-fn search_file(
-    file_path: &str,
-    raw_regexes: &[Regex],
-    escaped_regexes: &[Regex],
-) -> Result<Vec<String>, String> {
+fn search_file(file_path: &str, ac: &AhoCorasick) -> Result<Vec<String>, String> {
     let file = File::open(file_path)
         .map_err(|e| format!("Failed to open file {}: {}", file_path, e))?;
     let reader = BufReader::new(file);
@@ -130,13 +105,13 @@ fn search_file(
     let mut hits = Vec::new();
 
     for (line_num, line) in lines.iter().enumerate() {
-        // Look for any search string in this line (case-insensitive)
-        if raw_regexes.iter().any(|re| re.is_match(line)) {
+        // Look for any search string in this line (case-insensitive via AC)
+        if ac.find(line).is_some() {
                 let mut context = String::new();
                 
             // Line before
                 if line_num > 0 {
-                    let before_line = highlight_search_strings(&lines[line_num - 1], &escaped_regexes);
+                    let before_line = highlight_line(&lines[line_num - 1], ac);
                     context.push_str(&format!(
                         "<div class=\"line line-before\"><span class=\"line-number\">{}</span>{}</div>",
                         line_num,
@@ -145,7 +120,7 @@ fn search_file(
                 }
                 
             // Hit line
-                let highlighted_line = highlight_search_strings(line, &escaped_regexes);
+                let highlighted_line = highlight_line(line, ac);
                 context.push_str(&format!(
                 "<div class=\"line line-hit\"><span class=\"line-number\">{}</span>{} <span class=\"hit-marker\"></span></div>",
                     line_num + 1,
@@ -154,7 +129,7 @@ fn search_file(
                 
             // Line after
             if line_num + 1 < lines.len() {
-                    let after_line = highlight_search_strings(&lines[line_num + 1], &escaped_regexes);
+                    let after_line = highlight_line(&lines[line_num + 1], ac);
                     context.push_str(&format!(
                         "<div class=\"line line-after\"><span class=\"line-number\">{}</span>{}</div>",
                         line_num + 2,
@@ -350,19 +325,34 @@ fn html_escape(text: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-fn highlight_search_strings(line: &str, escaped_case_insensitive_regexes: &[Regex]) -> String {
-    let mut highlighted_line = html_escape(line);
-    for regex in escaped_case_insensitive_regexes {
-        highlighted_line = regex
-            .replace_all(&highlighted_line, |caps: &Captures| {
-                format!(
-                    "<span class=\"highlight\">{}</span>",
-                    caps.get(0).map(|m| m.as_str()).unwrap_or("")
-                )
-            })
-            .into_owned();
+fn highlight_line(line: &str, ac: &AhoCorasick) -> String {
+    let mut result = String::new();
+    let mut last_index: usize = 0;
+
+    for mat in ac.find_iter(line) {
+        let start = mat.start();
+        let end = mat.end();
+
+        if start > last_index {
+            result.push_str(&html_escape(&line[last_index..start]));
+        }
+
+        result.push_str("<span class=\"highlight\">");
+        result.push_str(&html_escape(&line[start..end]));
+        result.push_str("</span>");
+
+        last_index = end;
     }
-    highlighted_line
+
+    if last_index < line.len() {
+        result.push_str(&html_escape(&line[last_index..]));
+    }
+
+    if result.is_empty() {
+        html_escape(line)
+    } else {
+        result
+    }
 }
 
 // ============================
@@ -403,9 +393,14 @@ pub async fn start_credential_gathering(window: Window, config: CredGatherConfig
     search_strings.retain(|s| seen.insert(s.clone()));
     send_log_message(&window, format!("Loaded {} unique search strings", search_strings.len()));
 
-    // Precompile regexes once per run for performance
-    let raw_regexes = build_case_insensitive_regexes_from_raw(&search_strings);
-    let escaped_regexes = build_case_insensitive_regexes_from_escaped(&search_strings);
+    // Build Aho–Corasick automaton once per run for performance (ASCII case-insensitive)
+    let ac = match build_automaton(&search_strings) {
+        Ok(ac) => ac,
+        Err(e) => {
+            send_progress_update(&window, e.clone(), 0, None, "error");
+            return Ok(GatherResult { success: false, message: e.clone(), output_file: String::new(), total_entries: 0, errors: vec![e] });
+        }
+    };
 
     let file_paths = match read_lines(&config.file_list) {
         Ok(v) => v,
@@ -435,7 +430,7 @@ pub async fn start_credential_gathering(window: Window, config: CredGatherConfig
             break;
         }
 
-        match search_file(&file_path, &raw_regexes, &escaped_regexes) {
+        match search_file(&file_path, &ac) {
             Ok(hits) => {
                 if !hits.is_empty() {
                     send_log_message(&window, format!("[+] Hits in: {} ({} matches)", file_path, hits.len()));
