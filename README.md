@@ -2,11 +2,16 @@
 
 [![License: AGPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](LICENSE)
 
+<img width="800" height="470" alt="image" src="https://github.com/user-attachments/assets/0a7dc93c-14db-47ee-a458-967a41bafd35" />
+
+
 ## About
 Pillage Suite is a powerful graphical interface, inspired by Bloodhound, for exploring Network Shares in an Active Directory environment.
 It provides tools for the indexing and querying of files, folders, shares as well as identities from Active Directory. 
 
-Read more about the capabilities, usage aswell as motivation to create the tool on the release blog:
+Read more about the capabilities, aswell as motivation to create the tool on the release blog:
+
+Documentation can be found here: https://github.com/m0xr4/PillageSuite/wiki
 
 **NOTE**: This application is built to run on Windows, several currently used components rely on the Windows API.
 
