@@ -9,7 +9,7 @@
 Pillage Suite is a powerful graphical interface, inspired by Bloodhound, for exploring Network Shares in an Active Directory environment.
 It provides tools for the indexing and querying of files, folders, shares as well as identities from Active Directory. 
 
-Read more about the capabilities, aswell as motivation to create the tool on the release blog:
+Read more about the capabilities, aswell as motivation to create the tool on the release blog: https://blog.pentryx.ch/your-everyone-problem-exposing-share-access-at-scale-740a20c2284f
 
 Documentation can be found here: https://github.com/m0xr4/PillageSuite/wiki
 
