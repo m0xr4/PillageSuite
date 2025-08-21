@@ -271,6 +271,7 @@ fn walk_share_unc(
     max_entries: Option<usize>,
     writer: &mut BufWriter<std::fs::File>,
     debug_mode: bool,
+    global_count: &mut usize,
 ) -> usize {
     // Keep track of total entries processed
     let mut entries_count = 0;
@@ -280,19 +281,21 @@ fn walk_share_unc(
         send_progress_update(
             window,
             format!("Walking share: {}", unc_path),
-            0,
+            *global_count,
             max_entries,
             "walking".to_string(),
         );
         
         // First, create an entry for the share root
-        entries_count += process_share_root(unc_path, writer, debug_mode);
+        let added = process_share_root(unc_path, writer, debug_mode);
+        entries_count += added;
+        *global_count += added;
         
         // Update progress after processing the share root
         send_progress_update(
             window,
             format!("Processing share: {}", unc_path),
-            entries_count,
+            *global_count,
             max_entries,
             "walking".to_string(),
         );
@@ -313,7 +316,7 @@ fn walk_share_unc(
 
     // Check if we've reached the max entries limit
     if let Some(limit) = max_entries {
-        if entries_count >= limit {
+        if *global_count >= limit {
             if debug_mode {
                 send_log_message(window, format!("Reached max entries limit ({}) for share: {}", limit, unc_path));
             }
@@ -321,7 +324,7 @@ fn walk_share_unc(
                 send_progress_update(
                     window,
                     "Reached maximum entries limit".to_string(),
-                    entries_count,
+                    *global_count,
                     max_entries,
                     "complete".to_string(),
                 );
@@ -339,7 +342,7 @@ fn walk_share_unc(
                 send_progress_update(
                     window,
                     "Access denied or invalid path".to_string(),
-                    entries_count,
+                    *global_count,
                     max_entries,
                     "complete".to_string(),
                 );
@@ -351,7 +354,7 @@ fn walk_share_unc(
     for entry_result in entries {
         // Check if we've reached the max entries limit
         if let Some(limit) = max_entries {
-            if entries_count >= limit {
+            if *global_count >= limit {
                 if debug_mode {
                     send_log_message(window, format!("Reached max entries limit ({}) for share: {}", limit, unc_path));
                 }
@@ -359,7 +362,7 @@ fn walk_share_unc(
                     send_progress_update(
                         window,
                         "Reached maximum entries limit".to_string(),
-                        entries_count,
+                        *global_count,
                         max_entries,
                         "complete".to_string(),
                     );
@@ -375,40 +378,37 @@ fn walk_share_unc(
         let entry_path = entry.path();
 
         // Process this entry
-        entries_count += process_filesystem_entry(&entry, writer, debug_mode);
+        let added = process_filesystem_entry(&entry, writer, debug_mode);
+        entries_count += added;
+        *global_count += added;
         
-        // Update progress if at root level
-        if current_depth == 0 {
-            send_progress_update(
-                window,
-                format!("Processed {} entries", entries_count),
-                entries_count,
-                max_entries,
-                "walking".to_string(),
-            );
-        }
+        // Update progress at any depth to avoid UI stall during deep recursion
+        send_progress_update(
+            window,
+            format!("Processed {} entries", *global_count),
+            *global_count,
+            max_entries,
+            "walking".to_string(),
+        );
 
         // Recurse if directory
         if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
             let full_path = entry_path.to_string_lossy().to_string();
-            let remaining_entries = max_entries.map(|limit| limit.saturating_sub(entries_count));
-            let sub_entries = walk_share_unc(window, &full_path, current_depth + 1, max_depth, remaining_entries, writer, debug_mode);
+            let sub_entries = walk_share_unc(window, &full_path, current_depth + 1, max_depth, max_entries, writer, debug_mode, global_count);
             entries_count += sub_entries;
             
-            // Update progress after recursion if at root level
-            if current_depth == 0 {
-                send_progress_update(
-                    window,
-                    format!("Processed {} entries", entries_count),
-                    entries_count,
-                    max_entries,
-                    "walking".to_string(),
-                );
-            }
+            // Update progress after recursion
+            send_progress_update(
+                window,
+                format!("Processed {} entries", *global_count),
+                *global_count,
+                max_entries,
+                "walking".to_string(),
+            );
             
             // Check again after recursion
             if let Some(limit) = max_entries {
-                if entries_count >= limit {
+                if *global_count >= limit {
                     if debug_mode {
                         send_log_message(window, format!("Reached max entries limit ({}) after recursion for: {}", limit, full_path));
                     }
@@ -416,7 +416,7 @@ fn walk_share_unc(
                         send_progress_update(
                             window,
                             "Reached maximum entries limit".to_string(),
-                            entries_count,
+                            *global_count,
                             max_entries,
                             "complete".to_string(),
                         );
@@ -431,8 +431,8 @@ fn walk_share_unc(
     if current_depth == 0 {
         send_progress_update(
             window,
-            format!("Completed walking share: {} entries processed", entries_count),
-            entries_count,
+            format!("Completed walking share: {} entries processed", *global_count),
+            *global_count,
             max_entries,
             "complete".to_string(),
         );
@@ -945,7 +945,8 @@ fn run_normal_mode(window: &Window, config: &Config, hosts: Vec<String>, shares_
                 continue;
             }
             send_log_message(window, format!("[+] Walking share: {}", unc_path));
-            let entries = walk_share_unc(window, &unc_path, 0, config.max_depth, config.max_entries, &mut writer, config.debug_mode);
+            let mut share_count = 0;
+            let entries = walk_share_unc(window, &unc_path, 0, config.max_depth, config.max_entries, &mut writer, config.debug_mode, &mut share_count);
             total_entries += entries;
             writer.flush()?;
         }
@@ -980,7 +981,8 @@ fn run_normal_mode(window: &Window, config: &Config, hosts: Vec<String>, shares_
                         // UNC path
                         let unc = format!(r"\\{}\{}", host, share);
                         send_log_message(window, format!("[+] Walking share: {}", unc));
-                        let entries = walk_share_unc(window, &unc, 0, config.max_depth, config.max_entries, &mut writer, config.debug_mode);
+                        let mut share_count = 0;
+                        let entries = walk_share_unc(window, &unc, 0, config.max_depth, config.max_entries, &mut writer, config.debug_mode, &mut share_count);
                         total_entries += entries;
                         writer.flush()?;
                     }
