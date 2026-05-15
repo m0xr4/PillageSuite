@@ -18,6 +18,9 @@ pub struct CredGatherConfig {
     pub file_list: String,
     pub string_list: String,
     pub debug_mode: bool,
+    pub smb_username: Option<String>,
+    pub smb_password: Option<String>,
+    pub smb_domain: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -365,6 +368,33 @@ pub async fn start_credential_gathering(window: Window, config: CredGatherConfig
     ABORT_REQUESTED.store(false, Ordering::Relaxed);
     send_progress_update(&window, "Starting credential gathering...".to_string(), 0, None, "starting");
     send_log_message(&window, "Credential gathering started".to_string());
+
+    // Set up impersonation if SMB credentials are provided
+    let smb_username = config.smb_username.clone().unwrap_or_default();
+    let smb_password = config.smb_password.clone().unwrap_or_default();
+    let smb_domain = config.smb_domain.clone().unwrap_or_default();
+
+    let _impersonation_guard = if !smb_username.is_empty() && !smb_password.is_empty() {
+        send_log_message(&window, format!(
+            "Using explicit SMB credentials: {}{}{}",
+            if smb_domain.is_empty() { "" } else { &smb_domain },
+            if smb_domain.is_empty() { "" } else { "\\" },
+            &smb_username
+        ));
+        match crate::smb_auth::start_impersonation(&smb_username, &smb_password, &smb_domain) {
+            Ok(guard) => {
+                send_log_message(&window, "SMB impersonation established successfully".to_string());
+                Some(guard)
+            }
+            Err(e) => {
+                send_log_message(&window, format!("Failed to establish SMB impersonation: {}", e));
+                return Err(format!("SMB authentication failed: {}", e));
+            }
+        }
+    } else {
+        send_log_message(&window, "Using current session credentials".to_string());
+        None
+    };
 
     // Validate input files exist
     if !Path::new(&config.file_list).exists() {

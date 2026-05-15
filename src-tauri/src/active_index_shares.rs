@@ -5,7 +5,11 @@ use std::{
     path::PathBuf,
     ptr::null_mut,
     slice,
-    time::SystemTime,
+    sync::mpsc::{self, Receiver, Sender},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::Arc,
+    thread,
+    time::{Duration, SystemTime},
 };
 
 use chrono;
@@ -40,6 +44,56 @@ extern "system" {
     fn ConvertSidToStringSidW(Sid: PSID, StringSid: *mut *mut u16) -> i32;
 }
 
+/// Global abort flag checked by all workers and writer
+static INDEX_ABORT_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+//========================================================================
+// THREADING TYPES
+//========================================================================
+
+/// Messages sent from worker threads to the writer thread
+enum WorkerOutput {
+    JsonlRecord(String),
+    TextLine(String),
+    Log(String),
+    Error(String),
+    Done,
+}
+
+/// Configuration shared across worker threads
+struct WorkerConfig {
+    max_depth: usize,
+    max_entries: Option<usize>,
+    debug_mode: bool,
+    smb_username: String,
+    smb_password: String,
+    smb_domain: String,
+}
+
+/// Work-stealing queue: workers pull next item via AtomicUsize index
+struct WorkQueue {
+    items: Vec<String>,
+    next_index: AtomicUsize,
+}
+
+impl WorkQueue {
+    fn new(items: Vec<String>) -> Self {
+        WorkQueue {
+            items,
+            next_index: AtomicUsize::new(0),
+        }
+    }
+
+    fn next(&self) -> Option<String> {
+        let idx = self.next_index.fetch_add(1, Ordering::Relaxed);
+        self.items.get(idx).cloned()
+    }
+
+    fn len(&self) -> usize {
+        self.items.len()
+    }
+}
+
 //========================================================================
 // CONFIG AND TAURI STRUCTURES
 //========================================================================
@@ -53,6 +107,10 @@ pub struct IndexConfig {
     pub debug_mode: bool,
     pub share_enum_only: bool,
     pub shares_file: Option<String>,
+    pub smb_username: Option<String>,
+    pub smb_password: Option<String>,
+    pub smb_domain: Option<String>,
+    pub thread_count: Option<usize>,
 }
 
 /// Progress update structure for frontend
@@ -1012,6 +1070,378 @@ fn run_normal_mode(window: &Window, config: &Config, hosts: Vec<String>, shares_
 }
 
 //========================================================================
+// THREADED WALKER FUNCTIONS
+//========================================================================
+
+/// Threaded version of process_share_root — sends JSON via channel
+fn process_share_root_threaded(unc_path: &str, sender: &Sender<WorkerOutput>, debug_mode: bool) -> usize {
+    let path = PathBuf::from(unc_path);
+    match fs::metadata(&path) {
+        Ok(metadata) => {
+            let created_str = metadata.created().ok().and_then(system_time_to_string);
+            let modified_str = metadata.modified().ok().and_then(system_time_to_string);
+
+            let acls = match get_acl_info(&path, debug_mode, None) {
+                Ok(a) => Some(a),
+                Err(_) => None,
+            };
+
+            let share_meta = FileMetadata {
+                name: unc_path.to_string(),
+                full_path: unc_path.to_string(),
+                size: None,
+                extension: None,
+                created: created_str,
+                modified: modified_str,
+                acls,
+                entry_type: "share".to_string(),
+            };
+
+            if let Ok(json) = serde_json::to_string(&share_meta) {
+                let _ = sender.send(WorkerOutput::JsonlRecord(json));
+            }
+            1
+        }
+        Err(_) => 0,
+    }
+}
+
+/// Threaded version of process_filesystem_entry — sends JSON via channel
+fn process_filesystem_entry_threaded(
+    entry: &fs::DirEntry,
+    sender: &Sender<WorkerOutput>,
+    debug_mode: bool,
+) -> usize {
+    let file_name = entry.file_name().to_string_lossy().to_string();
+    let metadata = match entry.metadata() {
+        Ok(m) => m,
+        Err(_) => return 0,
+    };
+
+    let entry_path = entry.path();
+    let full_path = entry_path.to_string_lossy().to_string();
+    let extension = entry_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(String::from);
+
+    let created_str = metadata.created().ok().and_then(system_time_to_string);
+    let modified_str = metadata.modified().ok().and_then(system_time_to_string);
+
+    let acls = match get_acl_info(&entry_path, debug_mode, None) {
+        Ok(a) => Some(a),
+        Err(_) => None,
+    };
+
+    let file_meta = FileMetadata {
+        name: file_name,
+        full_path: full_path.clone(),
+        size: Some(metadata.len()),
+        extension,
+        created: created_str,
+        modified: modified_str,
+        acls,
+        entry_type: if metadata.is_dir() {
+            "directory".to_string()
+        } else {
+            "file".to_string()
+        },
+    };
+
+    if let Ok(json) = serde_json::to_string(&file_meta) {
+        let _ = sender.send(WorkerOutput::JsonlRecord(json));
+    }
+    1
+}
+
+/// Threaded version of walk_share_unc — sends results via channel, checks abort flag
+/// Uses a local per-share counter for max_entries so the limit applies per-share, not globally.
+fn walk_share_unc_threaded(
+    unc_path: &str,
+    current_depth: usize,
+    max_depth: usize,
+    max_entries: Option<usize>,
+    sender: &Sender<WorkerOutput>,
+    debug_mode: bool,
+    global_count: &AtomicUsize,
+) -> usize {
+    let mut entries_count = 0;
+
+    if current_depth == 0 {
+        let added = process_share_root_threaded(unc_path, sender, debug_mode);
+        entries_count += added;
+        global_count.fetch_add(added, Ordering::Relaxed);
+    }
+
+    if current_depth > max_depth {
+        return entries_count;
+    }
+
+    if INDEX_ABORT_REQUESTED.load(Ordering::Relaxed) {
+        return entries_count;
+    }
+
+    if let Some(limit) = max_entries {
+        if entries_count >= limit {
+            return entries_count;
+        }
+    }
+
+    let path = PathBuf::from(unc_path);
+    let entries = match fs::read_dir(&path) {
+        Ok(e) => e,
+        Err(_) => return entries_count,
+    };
+
+    for entry_result in entries {
+        if INDEX_ABORT_REQUESTED.load(Ordering::Relaxed) {
+            return entries_count;
+        }
+
+        if let Some(limit) = max_entries {
+            if entries_count >= limit {
+                if current_depth == 0 {
+                    let _ = sender.send(WorkerOutput::Log(format!(
+                        "Reached max entries limit ({}) for share: {}", limit, unc_path
+                    )));
+                }
+                return entries_count;
+            }
+        }
+
+        let entry = match entry_result {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let added = process_filesystem_entry_threaded(&entry, sender, debug_mode);
+        entries_count += added;
+        global_count.fetch_add(added, Ordering::Relaxed);
+
+        if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+            let full_path = entry.path().to_string_lossy().to_string();
+            let sub_entries = walk_share_unc_threaded(
+                &full_path,
+                current_depth + 1,
+                max_depth,
+                max_entries,
+                sender,
+                debug_mode,
+                global_count,
+            );
+            entries_count += sub_entries;
+
+            // Check again after recursion
+            if let Some(limit) = max_entries {
+                if entries_count >= limit {
+                    if current_depth == 0 {
+                        let _ = sender.send(WorkerOutput::Log(format!(
+                            "Reached max entries limit ({}) after recursion for share: {}", limit, unc_path
+                        )));
+                    }
+                    return entries_count;
+                }
+            }
+        }
+    }
+
+    if current_depth == 0 {
+        let _ = sender.send(WorkerOutput::Log(format!(
+            "Completed share: {} ({} entries)", unc_path, entries_count
+        )));
+    }
+
+    entries_count
+}
+
+//========================================================================
+// WORKER AND WRITER THREAD FUNCTIONS
+//========================================================================
+
+/// Worker thread: pulls work items from queue, processes them, sends results
+fn worker_thread(
+    worker_id: usize,
+    queue: &WorkQueue,
+    sender: Sender<WorkerOutput>,
+    config: &WorkerConfig,
+    global_count: Arc<AtomicUsize>,
+    share_enum_only: bool,
+) {
+    // Set up per-thread impersonation
+    let _impersonation_guard = if !config.smb_username.is_empty() && !config.smb_password.is_empty() {
+        match crate::smb_auth::start_impersonation(&config.smb_username, &config.smb_password, &config.smb_domain) {
+            Ok(guard) => {
+                let _ = sender.send(WorkerOutput::Log(format!(
+                    "Worker {}: SMB impersonation established", worker_id
+                )));
+                Some(guard)
+            }
+            Err(e) => {
+                let _ = sender.send(WorkerOutput::Error(format!(
+                    "Worker {}: Failed to establish SMB impersonation: {}", worker_id, e
+                )));
+                let _ = sender.send(WorkerOutput::Done);
+                return;
+            }
+        }
+    } else {
+        None
+    };
+
+    while !INDEX_ABORT_REQUESTED.load(Ordering::Relaxed) {
+        let item = match queue.next() {
+            Some(i) => i,
+            None => break,
+        };
+        let item = item.trim().to_string();
+        if item.is_empty() {
+            continue;
+        }
+
+        if share_enum_only {
+            // Mode 0: enumerate shares on host, send TextLine per share
+            let _ = sender.send(WorkerOutput::Log(format!(
+                "Worker {}: Enumerating shares on host: {}", worker_id, item
+            )));
+            match enumerate_shares(&item) {
+                Ok(shares) => {
+                    for share in shares {
+                        if should_skip_share(&share) {
+                            if config.debug_mode {
+                                let _ = sender.send(WorkerOutput::Log(format!(
+                                    "Worker {}: Skipping share: {}", worker_id, share
+                                )));
+                            }
+                            continue;
+                        }
+                        let unc = format!(r"\\{}\{}", item, share);
+                        let _ = sender.send(WorkerOutput::TextLine(unc.clone()));
+                        let _ = sender.send(WorkerOutput::Log(format!(
+                            "[+] Worker {}: Found share: {}", worker_id, unc
+                        )));
+                    }
+                }
+                Err(e) => {
+                    let msg = if config.debug_mode {
+                        format!("Worker {}: Failed to enumerate shares on {}: {:?}", worker_id, item, e)
+                    } else {
+                        format!("Worker {}: Host {} unreachable", worker_id, item)
+                    };
+                    let _ = sender.send(WorkerOutput::Error(msg));
+                }
+            }
+        } else {
+            // Mode 1/2: walk a UNC share path
+            let _ = sender.send(WorkerOutput::Log(format!(
+                "Worker {}: Walking share: {}", worker_id, item
+            )));
+            walk_share_unc_threaded(
+                &item,
+                0,
+                config.max_depth,
+                config.max_entries,
+                &sender,
+                config.debug_mode,
+                &global_count,
+            );
+        }
+    }
+
+    let _ = sender.send(WorkerOutput::Done);
+}
+
+/// Writer thread: receives WorkerOutput, writes to file, emits progress to window
+fn writer_thread(
+    receiver: Receiver<WorkerOutput>,
+    window: Window,
+    output_path: String,
+    total_workers: usize,
+    _share_enum_only: bool,
+) -> (usize, Vec<String>) {
+    let file = match OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&output_path)
+    {
+        Ok(f) => f,
+        Err(e) => {
+            let _ = window.emit("indexing-log", format!("Writer: Failed to open output file: {}", e));
+            return (0, vec![e.to_string()]);
+        }
+    };
+
+    let mut writer = BufWriter::new(file);
+    let mut total_entries: usize = 0;
+    let mut errors = Vec::new();
+    let mut done_count = 0;
+    let mut records_since_flush: usize = 0;
+
+    while done_count < total_workers {
+        if INDEX_ABORT_REQUESTED.load(Ordering::Relaxed) {
+            break;
+        }
+
+        match receiver.recv_timeout(Duration::from_millis(200)) {
+            Ok(msg) => match msg {
+                WorkerOutput::JsonlRecord(json) => {
+                    let _ = writer.write_all(json.as_bytes());
+                    let _ = writer.write_all(b"\n");
+                    total_entries += 1;
+                    records_since_flush += 1;
+
+                    if records_since_flush >= 50 {
+                        let _ = writer.flush();
+                        records_since_flush = 0;
+                    }
+
+                    let _ = window.emit("indexing-progress", ProgressUpdate {
+                        message: format!("Processed {} entries", total_entries),
+                        current: total_entries,
+                        total: None,
+                        stage: "walking".to_string(),
+                    });
+                }
+                WorkerOutput::TextLine(line) => {
+                    let _ = writeln!(writer, "{}", line);
+                    total_entries += 1;
+                    records_since_flush += 1;
+
+                    if records_since_flush >= 50 {
+                        let _ = writer.flush();
+                        records_since_flush = 0;
+                    }
+
+                    let _ = window.emit("indexing-progress", ProgressUpdate {
+                        message: format!("Found {} shares", total_entries),
+                        current: total_entries,
+                        total: None,
+                        stage: "enumerating".to_string(),
+                    });
+                }
+                WorkerOutput::Log(msg) => {
+                    let _ = window.emit("indexing-log", msg);
+                }
+                WorkerOutput::Error(msg) => {
+                    let _ = window.emit("indexing-log", msg.clone());
+                    errors.push(msg);
+                }
+                WorkerOutput::Done => {
+                    done_count += 1;
+                }
+            },
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    // Final flush
+    let _ = writer.flush();
+
+    (total_entries, errors)
+}
+
+//========================================================================
 // TAURI COMMANDS
 //========================================================================
 
@@ -1021,6 +1451,9 @@ pub async fn start_active_indexing(
     window: Window,
     config: IndexConfig,
 ) -> Result<IndexResult, String> {
+    // Reset abort flag
+    INDEX_ABORT_REQUESTED.store(false, Ordering::Relaxed);
+
     // Send initial progress
     send_progress_update(
         &window,
@@ -1037,14 +1470,19 @@ pub async fn start_active_indexing(
     } else {
         format!("indexed_shares_{}.jsonl", timestamp)
     };
-    
-    // Create internal config
+
+    // Extract SMB credentials before moving config
+    let smb_username = config.smb_username.clone().unwrap_or_default();
+    let smb_password = config.smb_password.clone().unwrap_or_default();
+    let smb_domain = config.smb_domain.clone().unwrap_or_default();
+    let thread_count = config.thread_count.unwrap_or(4).max(1).min(32);
     let internal_config = Config::from_index_config(config, output_filename.clone());
-    
+
     // Send log message about configuration
     send_log_message(&window, "Active indexing started".to_string());
     send_log_message(&window, format!("Max depth: {}", internal_config.max_depth));
     send_log_message(&window, format!("Output file: {}", output_filename));
+    send_log_message(&window, format!("Thread count: {}", thread_count));
     if let Some(limit) = internal_config.max_entries {
         send_log_message(&window, format!("Max entries per share: {}", limit));
     }
@@ -1054,28 +1492,22 @@ pub async fn start_active_indexing(
 
     // Handle different input modes
     let (hosts, shares_to_walk) = if let Some(shares_file) = &internal_config.shares_file {
-        // --shares mode: read UNC paths directly from file
         let shares = load_shares_from_file(shares_file);
-        
         if internal_config.debug_mode {
             send_log_message(&window, format!("Loaded {} shares from file: {}", shares.len(), shares_file));
         }
-        
-        (Vec::new(), shares) // No hosts needed in this mode
+        (Vec::new(), shares)
     } else {
-        // Parse targets - could be comma-separated hosts or a file path
         let hosts = if internal_config.target_or_file.contains(',') {
-            // Comma-separated hosts
             internal_config.target_or_file
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect()
         } else {
-            // Single host or file path
             load_hosts(&internal_config.target_or_file)
         };
-        (hosts, Vec::new()) // No pre-defined shares in this mode
+        (hosts, Vec::new())
     };
 
     if internal_config.shares_file.is_some() {
@@ -1083,68 +1515,224 @@ pub async fn start_active_indexing(
     } else {
         send_log_message(&window, format!("Hosts to enumerate: {}", hosts.len()));
     }
-    
-    // Run in the appropriate mode
-    let mut total_entries = 0;
-    let mut errors = Vec::new();
-    
-    let result = if internal_config.share_enum_only {
-        match run_share_enum_only_mode(&window, &internal_config, hosts) {
-            Ok(_) => {
-                // For share enumeration, we don't count individual entries
-                total_entries = 0;
-                Ok(())
-            }
-            Err(e) => Err(e)
-        }
-    } else {
-        let entries_result = run_normal_mode(&window, &internal_config, hosts, shares_to_walk);
-        match entries_result {
-            Ok(entries) => {
-                total_entries = entries;
-                Ok(())
-            }
-            Err(e) => Err(e)
-        }
-    };
 
-    // Handle results
-    match result {
-        Ok(_) => {
-            send_progress_update(
-                &window,
-                "Indexing completed successfully".to_string(),
-                total_entries,
-                None,
-                "complete".to_string(),
-            );
-            
-            Ok(IndexResult {
+    let _aborted = INDEX_ABORT_REQUESTED.load(Ordering::Relaxed);
+    let total_entries;
+    let errors;
+
+    if thread_count == 1 {
+        // Sequential fallback (thread_count == 1)
+        let _impersonation_guard = if !smb_username.is_empty() && !smb_password.is_empty() {
+            send_log_message(&window, format!(
+                "Using explicit SMB credentials: {}{}{}",
+                if smb_domain.is_empty() { "" } else { &smb_domain },
+                if smb_domain.is_empty() { "" } else { "\\" },
+                &smb_username
+            ));
+            match crate::smb_auth::start_impersonation(&smb_username, &smb_password, &smb_domain) {
+                Ok(guard) => {
+                    send_log_message(&window, "SMB impersonation established successfully".to_string());
+                    Some(guard)
+                }
+                Err(e) => {
+                    send_log_message(&window, format!("Failed to establish SMB impersonation: {}", e));
+                    return Err(format!("SMB authentication failed: {}", e));
+                }
+            }
+        } else {
+            send_log_message(&window, "Using current session credentials".to_string());
+            None
+        };
+
+        let mut errs = Vec::new();
+        let entries = if internal_config.share_enum_only {
+            match run_share_enum_only_mode(&window, &internal_config, hosts) {
+                Ok(_) => 0,
+                Err(e) => {
+                    errs.push(e.to_string());
+                    0
+                }
+            }
+        } else {
+            match run_normal_mode(&window, &internal_config, hosts, shares_to_walk) {
+                Ok(e) => e,
+                Err(e) => {
+                    errs.push(e.to_string());
+                    0
+                }
+            }
+        };
+        total_entries = entries;
+        errors = errs;
+    } else {
+        // Threaded path
+        // Phase 1: enumerate all shares sequentially (for Mode 0/1)
+        let work_items = if internal_config.share_enum_only {
+            // Mode 0: work items are hosts
+            hosts
+        } else if !shares_to_walk.is_empty() {
+            // Mode 2: work items are UNC paths from file
+            shares_to_walk
+        } else {
+            // Mode 1: enumerate shares from hosts, collect UNC paths
+            let _impersonation_guard = if !smb_username.is_empty() && !smb_password.is_empty() {
+                send_log_message(&window, format!(
+                    "Using explicit SMB credentials: {}{}{}",
+                    if smb_domain.is_empty() { "" } else { &smb_domain },
+                    if smb_domain.is_empty() { "" } else { "\\" },
+                    &smb_username
+                ));
+                match crate::smb_auth::start_impersonation(&smb_username, &smb_password, &smb_domain) {
+                    Ok(guard) => {
+                        send_log_message(&window, "SMB impersonation established for Phase 1".to_string());
+                        Some(guard)
+                    }
+                    Err(e) => {
+                        send_log_message(&window, format!("Failed to establish SMB impersonation: {}", e));
+                        return Err(format!("SMB authentication failed: {}", e));
+                    }
+                }
+            } else {
+                send_log_message(&window, "Using current session credentials".to_string());
+                None
+            };
+
+            let mut all_uncs = Vec::new();
+            for host in &hosts {
+                if INDEX_ABORT_REQUESTED.load(Ordering::Relaxed) {
+                    break;
+                }
+                let host = host.trim();
+                if host.is_empty() {
+                    continue;
+                }
+                send_log_message(&window, format!("Enumerating shares on host: {}", host));
+                match enumerate_shares(host) {
+                    Ok(shares) => {
+                        for share in shares {
+                            if should_skip_share(&share) {
+                                continue;
+                            }
+                            all_uncs.push(format!(r"\\{}\{}", host, share));
+                        }
+                    }
+                    Err(e) => {
+                        let msg = if internal_config.debug_mode {
+                            format!("Failed to enumerate shares on {}: {:?}", host, e)
+                        } else {
+                            format!("Host {} unreachable", host)
+                        };
+                        send_log_message(&window, msg);
+                    }
+                }
+            }
+            send_log_message(&window, format!("Phase 1 complete: {} shares to walk", all_uncs.len()));
+            all_uncs
+        };
+
+        if work_items.is_empty() {
+            send_progress_update(&window, "No work items found".to_string(), 0, None, "complete".to_string());
+            return Ok(IndexResult {
                 success: true,
-                message: "Active indexing completed successfully".to_string(),
+                message: "No shares or hosts to process".to_string(),
                 output_file: output_filename,
-                total_entries,
-                errors,
-            })
+                total_entries: 0,
+                errors: vec![],
+            });
         }
-                 Err(e) => {
-            let error_msg = e.to_string();
-            errors.push(error_msg.clone());
-            send_progress_update(
-                &window,
-                format!("Indexing failed: {}", error_msg),
-                total_entries,
-                None,
-                "error".to_string(),
-            );
-            
-            Ok(IndexResult {
-                success: false,
-                message: error_msg,
-                output_file: output_filename,
-                total_entries,
-                errors,
-            })
+
+        // Phase 2: spawn workers + writer
+        let queue = Arc::new(WorkQueue::new(work_items));
+        let global_count = Arc::new(AtomicUsize::new(0));
+        let (sender, receiver) = mpsc::channel();
+
+        let worker_config = WorkerConfig {
+            max_depth: internal_config.max_depth,
+            max_entries: internal_config.max_entries,
+            debug_mode: internal_config.debug_mode,
+            smb_username,
+            smb_password,
+            smb_domain,
+        };
+
+        // Spawn workers
+        let num_workers = thread_count.min(queue.len());
+        let mut worker_handles = Vec::with_capacity(num_workers);
+
+        send_log_message(&window, format!("Spawning {} worker threads", num_workers));
+
+        for worker_id in 0..num_workers {
+            let sender = sender.clone();
+            let queue = Arc::clone(&queue);
+            let global_count = Arc::clone(&global_count);
+            let config = WorkerConfig {
+                max_depth: worker_config.max_depth,
+                max_entries: worker_config.max_entries,
+                debug_mode: worker_config.debug_mode,
+                smb_username: worker_config.smb_username.clone(),
+                smb_password: worker_config.smb_password.clone(),
+                smb_domain: worker_config.smb_domain.clone(),
+            };
+            let share_enum_only = internal_config.share_enum_only;
+
+            let handle = thread::spawn(move || {
+                worker_thread(worker_id, &queue, sender, &config, global_count, share_enum_only);
+            });
+            worker_handles.push(handle);
         }
+
+        // Drop the main thread's sender so the writer detects completion
+        drop(sender);
+
+        // Spawn writer thread
+        let writer_window = window.clone();
+        let writer_output = output_filename.clone();
+        let writer_share_enum_only = internal_config.share_enum_only;
+
+        let writer_handle = thread::spawn(move || {
+            writer_thread(receiver, writer_window, writer_output, num_workers, writer_share_enum_only)
+        });
+
+        // Wait for all workers to finish
+        for handle in worker_handles {
+            let _ = handle.join();
+        }
+
+        // Wait for writer to finish
+        let (entries, errs) = writer_handle.join().unwrap_or((0, vec!["Writer thread panicked".to_string()]));
+        total_entries = entries;
+        errors = errs;
     }
+
+    let was_aborted = INDEX_ABORT_REQUESTED.load(Ordering::Relaxed);
+    if was_aborted {
+        send_log_message(&window, "Indexing aborted by user".to_string());
+    }
+
+    send_progress_update(
+        &window,
+        if was_aborted { "Indexing aborted".to_string() } else { "Indexing completed successfully".to_string() },
+        total_entries,
+        None,
+        "complete".to_string(),
+    );
+
+    Ok(IndexResult {
+        success: !was_aborted,
+        message: if was_aborted {
+            "Indexing aborted by user".to_string()
+        } else {
+            "Active indexing completed successfully".to_string()
+        },
+        output_file: output_filename,
+        total_entries,
+        errors,
+    })
+}
+
+/// Abort the active indexing process
+#[tauri::command]
+pub async fn abort_active_indexing() -> Result<(), String> {
+    INDEX_ABORT_REQUESTED.store(true, Ordering::Relaxed);
+    Ok(())
 }

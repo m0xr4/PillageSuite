@@ -39,6 +39,50 @@
 
         <div class="operation-config">
           <h3>Configuration</h3>
+
+          <!-- SMB Authentication Section -->
+          <div class="smb-credentials-section">
+            <div class="smb-credentials-header" @click="smbCredsExpanded = !smbCredsExpanded">
+              <h3>
+                <span class="expand-icon">{{ smbCredsExpanded ? '▼' : '▶' }}</span>
+                SMB Authentication
+              </h3>
+              <small class="help-text">Optional — leave empty to use current session credentials</small>
+            </div>
+            <div v-if="smbCredsExpanded" class="config-form smb-credentials-form">
+              <div class="config-item">
+                <label>Domain</label>
+                <input
+                  type="text"
+                  v-model="config.smb_domain"
+                  placeholder="DOMAIN or domain.local (optional)"
+                  :disabled="isRunning"
+                >
+                <small class="help-text">NetBIOS domain name or FQDN. Leave empty for local accounts or to use default.</small>
+              </div>
+              <div class="config-item">
+                <label>Username</label>
+                <input
+                  type="text"
+                  v-model="config.smb_username"
+                  placeholder="e.g. adminuser"
+                  :disabled="isRunning"
+                >
+                <small class="help-text">Username for SMB authentication. Leave empty to use current session.</small>
+              </div>
+              <div class="config-item">
+                <label>Password</label>
+                <input
+                  type="password"
+                  v-model="config.smb_password"
+                  placeholder="Password for SMB authentication"
+                  :disabled="isRunning"
+                >
+                <small class="help-text">Password. Leave empty to use current session credentials.</small>
+              </div>
+            </div>
+          </div>
+
           <div class="config-form">
             <div class="config-item">
               <label>File list</label>
@@ -271,7 +315,10 @@ const operations = [
 const config = ref({
   file_list: '',
   string_list: '',
-  debug_mode: false
+  debug_mode: false,
+  smb_domain: '',
+  smb_username: '',
+  smb_password: ''
 });
 
 // Query edit toggles and text
@@ -283,6 +330,7 @@ const stringQueryText = ref('MATCH (n:User) WHERE size(n.sam_account_name) >= 3 
 // Execution state
 const isRunning = ref(false);
 const abortRequested = ref(false);
+const smbCredsExpanded = ref(false);
 const progress = ref(null);
 const logs = ref([]);
 const result = ref(null);
@@ -347,7 +395,10 @@ const runCredentialGathering = async () => {
     const cgConfig = {
       file_list: config.value.file_list,
       string_list: config.value.string_list,
-      debug_mode: config.value.debug_mode
+      debug_mode: config.value.debug_mode,
+      smb_username: config.value.smb_username || null,
+      smb_password: config.value.smb_password || null,
+      smb_domain: config.value.smb_domain || null
     };
 
     const response = await invoke('start_credential_gathering', { config: cgConfig });
@@ -546,6 +597,44 @@ onUnmounted(() => {
   padding: 1.5rem;
   height: 100%;
   overflow-y: auto;
+}
+
+.smb-credentials-section {
+  background-color: var(--color-content-bg);
+  border-radius: 0.375rem;
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+  margin-bottom: 1.5rem;
+}
+
+.smb-credentials-header {
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background-color 0.2s;
+}
+
+.smb-credentials-header:hover {
+  background-color: var(--color-button-hover);
+}
+
+.smb-credentials-header h3 {
+  color: var(--color-text);
+  margin: 0;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.expand-icon {
+  font-size: 0.7rem;
+}
+
+.smb-credentials-form {
+  padding: 0 1rem 1rem 1rem;
 }
 
 .empty-state {

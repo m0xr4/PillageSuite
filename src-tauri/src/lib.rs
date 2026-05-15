@@ -1,6 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 mod json_importer;
 mod saved_queries;
+mod smb_auth;
 mod active_index_shares;
 mod active_index_ldap;
 mod gather_credz;
@@ -18,6 +19,7 @@ pub fn run() {
             saved_queries::add_user_query,
             saved_queries::delete_user_query,
             active_index_shares::start_active_indexing,
+            active_index_shares::abort_active_indexing,
             active_index_ldap::start_ldap_enumeration,
             gather_credz::start_credential_gathering,
             gather_credz::abort_credential_gathering

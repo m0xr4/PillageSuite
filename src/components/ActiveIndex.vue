@@ -30,8 +30,51 @@
         <p class="empty-state-description">Choose an indexing operation from the sidebar to configure and run it.</p>
       </div>
 
+      <!-- Shared SMB Credentials (visible for operations 0, 1, 2) -->
+      <div v-show="selectedOperation !== null && selectedOperation < 3" class="smb-credentials-section">
+        <div class="smb-credentials-header" @click="smbCredsExpanded = !smbCredsExpanded">
+          <h3>
+            <span class="expand-icon">{{ smbCredsExpanded ? '▼' : '▶' }}</span>
+            SMB Authentication
+          </h3>
+          <small class="help-text">Optional — leave empty to use current session credentials</small>
+        </div>
+        <div v-if="smbCredsExpanded" class="config-form smb-credentials-form">
+          <div class="config-item">
+            <label>Domain</label>
+            <input
+              type="text"
+              v-model="config.smb_domain"
+              placeholder="DOMAIN or domain.local (optional)"
+              :disabled="isRunning"
+            >
+            <small class="help-text">NetBIOS domain name or FQDN. Leave empty for local accounts or to use default.</small>
+          </div>
+          <div class="config-item">
+            <label>Username</label>
+            <input
+              type="text"
+              v-model="config.smb_username"
+              placeholder="e.g. adminuser"
+              :disabled="isRunning"
+            >
+            <small class="help-text">Username for SMB authentication. Leave empty to use current session.</small>
+          </div>
+          <div class="config-item">
+            <label>Password</label>
+            <input
+              type="password"
+              v-model="config.smb_password"
+              placeholder="Password for SMB authentication"
+              :disabled="isRunning"
+            >
+            <small class="help-text">Password. Leave empty to use current session credentials.</small>
+          </div>
+        </div>
+      </div>
+
       <!-- Share Enumeration Operation -->
-      <div v-else-if="selectedOperation === 0" class="operation-details">
+      <div v-if="selectedOperation === 0" class="operation-details">
         <div class="operation-header">
           <h2>{{ operations[0].name }}</h2>
           <p class="operation-description">{{ operations[0].description }}</p>
@@ -43,14 +86,14 @@
             <div class="config-item">
               <label>Target Hosts</label>
               <div class="input-group">
-                <input 
-                  type="text" 
-                  v-model="config.targets" 
-                  placeholder="Enter comma-separated hostnames (e.g., DC01,FILE01,SHARE01)" 
+                <input
+                  type="text"
+                  v-model="config.targets"
+                  placeholder="Enter comma-separated hostnames (e.g., DC01,FILE01,SHARE01)"
                   :disabled="isRunning"
                 >
-                <button 
-                  @click="selectHostsFile" 
+                <button
+                  @click="selectHostsFile"
                   class="file-button"
                   :disabled="isRunning"
                   title="Select file containing hostnames"
@@ -60,11 +103,23 @@
               </div>
               <small class="help-text">Enter hostnames separated by commas, or select a file containing hostnames (one per line)</small>
             </div>
-            
+
+            <div class="config-item">
+              <label>Thread Count</label>
+              <input
+                type="number"
+                v-model.number="config.thread_count"
+                min="1"
+                max="32"
+                :disabled="isRunning"
+              >
+              <small class="help-text">Number of parallel worker threads (1 = sequential, default: 4)</small>
+            </div>
+
             <div class="config-item">
               <label>
-                <input 
-                  type="checkbox" 
+                <input
+                  type="checkbox"
                   v-model="config.debug_mode"
                   :disabled="isRunning"
                 >
@@ -76,13 +131,20 @@
         </div>
 
         <div class="operation-actions">
-          <button 
-            @click="runShareEnumeration" 
+          <button
+            @click="runShareEnumeration"
             class="run-button"
             :disabled="isRunning || !config.targets.trim()"
             :class="{ 'running': isRunning }"
           >
             {{ isRunning ? 'Enumerating...' : 'Run Share Enumeration' }}
+          </button>
+          <button
+            v-if="isRunning"
+            @click="abortIndexing"
+            class="abort-button"
+          >
+            Abort
           </button>
         </div>
 
@@ -135,7 +197,7 @@
       </div>
 
       <!-- File Walking Operation -->
-      <div v-else-if="selectedOperation === 1" class="operation-details">
+      <div v-if="selectedOperation === 1" class="operation-details">
         <div class="operation-header">
           <h2>{{ operations[1].name }}</h2>
           <p class="operation-description">{{ operations[1].description }}</p>
@@ -147,14 +209,14 @@
             <div class="config-item">
               <label>Target Hosts</label>
               <div class="input-group">
-                <input 
-                  type="text" 
-                  v-model="config.targets" 
-                  placeholder="Enter comma-separated hostnames (e.g., DC01,FILE01,SHARE01)" 
+                <input
+                  type="text"
+                  v-model="config.targets"
+                  placeholder="Enter comma-separated hostnames (e.g., DC01,FILE01,SHARE01)"
                   :disabled="isRunning"
                 >
-                <button 
-                  @click="selectHostsFile" 
+                <button
+                  @click="selectHostsFile"
                   class="file-button"
                   :disabled="isRunning"
                   title="Select file containing hostnames"
@@ -167,10 +229,10 @@
 
             <div class="config-item">
               <label>Maximum Directory Depth</label>
-              <input 
-                type="number" 
-                v-model.number="config.max_depth" 
-                min="1" 
+              <input
+                type="number"
+                v-model.number="config.max_depth"
+                min="1"
                 max="10"
                 :disabled="isRunning"
               >
@@ -179,21 +241,33 @@
 
             <div class="config-item">
               <label>Max Entries per Share</label>
-              <input 
-                type="number" 
-                v-model.number="config.max_entries" 
-                min="100" 
+              <input
+                type="number"
+                v-model.number="config.max_entries"
+                min="100"
                 max="50000"
                 placeholder="5000"
                 :disabled="isRunning"
               >
               <small class="help-text">Limit entries per share to prevent excessive data collection</small>
             </div>
-            
+
+            <div class="config-item">
+              <label>Thread Count</label>
+              <input
+                type="number"
+                v-model.number="config.thread_count"
+                min="1"
+                max="32"
+                :disabled="isRunning"
+              >
+              <small class="help-text">Number of parallel worker threads (1 = sequential, default: 4)</small>
+            </div>
+
             <div class="config-item">
               <label>
-                <input 
-                  type="checkbox" 
+                <input
+                  type="checkbox"
                   v-model="config.debug_mode"
                   :disabled="isRunning"
                 >
@@ -205,13 +279,20 @@
         </div>
 
         <div class="operation-actions">
-          <button 
-            @click="runFullIndexing" 
+          <button
+            @click="runFullIndexing"
             class="run-button"
             :disabled="isRunning || !config.targets.trim()"
             :class="{ 'running': isRunning }"
           >
             {{ isRunning ? 'Indexing...' : 'Run Full Indexing' }}
+          </button>
+          <button
+            v-if="isRunning"
+            @click="abortIndexing"
+            class="abort-button"
+          >
+            Abort
           </button>
         </div>
 
@@ -264,7 +345,7 @@
       </div>
 
       <!-- UNC Paths Operation -->
-      <div v-else-if="selectedOperation === 2" class="operation-details">
+      <div v-if="selectedOperation === 2" class="operation-details">
         <div class="operation-header">
           <h2>{{ operations[2].name }}</h2>
           <p class="operation-description">{{ operations[2].description }}</p>
@@ -276,15 +357,15 @@
             <div class="config-item">
               <label>UNC Paths File</label>
               <div class="input-group">
-                <input 
-                  type="text" 
-                  v-model="config.shares_file" 
-                  placeholder="Select file containing UNC paths" 
+                <input
+                  type="text"
+                  v-model="config.shares_file"
+                  placeholder="Select file containing UNC paths"
                   readonly
                   :disabled="isRunning"
                 >
-                <button 
-                  @click="selectUNCFile" 
+                <button
+                  @click="selectUNCFile"
                   class="file-button"
                   :disabled="isRunning"
                   title="Select file containing UNC paths"
@@ -297,10 +378,10 @@
 
             <div class="config-item">
               <label>Maximum Directory Depth</label>
-              <input 
-                type="number" 
-                v-model.number="config.max_depth" 
-                min="1" 
+              <input
+                type="number"
+                v-model.number="config.max_depth"
+                min="1"
                 max="10"
                 :disabled="isRunning"
               >
@@ -309,21 +390,33 @@
 
             <div class="config-item">
               <label>Max Entries per Share</label>
-              <input 
-                type="number" 
-                v-model.number="config.max_entries" 
-                min="100" 
+              <input
+                type="number"
+                v-model.number="config.max_entries"
+                min="100"
                 max="50000"
                 placeholder="5000"
                 :disabled="isRunning"
               >
               <small class="help-text">Limit entries per share to prevent excessive data collection</small>
             </div>
-            
+
+            <div class="config-item">
+              <label>Thread Count</label>
+              <input
+                type="number"
+                v-model.number="config.thread_count"
+                min="1"
+                max="32"
+                :disabled="isRunning"
+              >
+              <small class="help-text">Number of parallel worker threads (1 = sequential, default: 4)</small>
+            </div>
+
             <div class="config-item">
               <label>
-                <input 
-                  type="checkbox" 
+                <input
+                  type="checkbox"
                   v-model="config.debug_mode"
                   :disabled="isRunning"
                 >
@@ -335,13 +428,20 @@
         </div>
 
         <div class="operation-actions">
-          <button 
-            @click="runUNCIndexing" 
+          <button
+            @click="runUNCIndexing"
             class="run-button"
             :disabled="isRunning || !config.shares_file"
             :class="{ 'running': isRunning }"
           >
             {{ isRunning ? 'Indexing...' : 'Run UNC Indexing' }}
+          </button>
+          <button
+            v-if="isRunning"
+            @click="abortIndexing"
+            class="abort-button"
+          >
+            Abort
           </button>
         </div>
 
@@ -394,7 +494,7 @@
       </div>
 
       <!-- Domain Enumeration Operation -->
-      <div v-else-if="selectedOperation === 3" class="operation-details">
+      <div v-if="selectedOperation === 3" class="operation-details">
         <div class="operation-header">
           <h2>{{ operations[3].name }}</h2>
           <p class="operation-description">{{ operations[3].description }}</p>
@@ -599,6 +699,11 @@ const config = ref({
   debug_mode: false,
   share_enum_only: false,
   shares_file: null,
+  thread_count: 4,
+  // SMB credentials (shared across share operations)
+  smb_domain: '',
+  smb_username: '',
+  smb_password: '',
   // LDAP config
   dc_hostname: '',
   base_dn: '',
@@ -613,6 +718,7 @@ const isRunning = ref(false);
 const progress = ref(null);
 const logs = ref([]);
 const result = ref(null);
+const smbCredsExpanded = ref(false);
 const hasResults = computed(() => logs.value.length > 0 || result.value !== null);
 
 // Progress percentage computation
@@ -676,12 +782,16 @@ const runShareEnumeration = async () => {
       max_entries: config.value.max_entries || null,
       debug_mode: config.value.debug_mode,
       share_enum_only: true,
-      shares_file: null
+      shares_file: null,
+      smb_username: config.value.smb_username || null,
+      smb_password: config.value.smb_password || null,
+      smb_domain: config.value.smb_domain || null,
+      thread_count: config.value.thread_count || null
     };
-    
+
     const response = await invoke('start_active_indexing', { config: indexConfig });
     result.value = response;
-    
+
   } catch (error) {
     console.error('Error running share enumeration:', error);
     result.value = {
@@ -698,10 +808,10 @@ const runShareEnumeration = async () => {
 
 const runFullIndexing = async () => {
   if (isRunning.value) return;
-  
+
   clearResults();
   isRunning.value = true;
-  
+
   try {
     const indexConfig = {
       targets: config.value.targets,
@@ -709,12 +819,16 @@ const runFullIndexing = async () => {
       max_entries: config.value.max_entries || null,
       debug_mode: config.value.debug_mode,
       share_enum_only: false,
-      shares_file: null
+      shares_file: null,
+      smb_username: config.value.smb_username || null,
+      smb_password: config.value.smb_password || null,
+      smb_domain: config.value.smb_domain || null,
+      thread_count: config.value.thread_count || null
     };
-    
+
     const response = await invoke('start_active_indexing', { config: indexConfig });
     result.value = response;
-    
+
   } catch (error) {
     console.error('Error running full indexing:', error);
     result.value = {
@@ -731,10 +845,10 @@ const runFullIndexing = async () => {
 
 const runUNCIndexing = async () => {
   if (isRunning.value) return;
-  
+
   clearResults();
   isRunning.value = true;
-  
+
   try {
     const indexConfig = {
       targets: '',
@@ -742,7 +856,11 @@ const runUNCIndexing = async () => {
       max_entries: config.value.max_entries || null,
       debug_mode: config.value.debug_mode,
       share_enum_only: false,
-      shares_file: config.value.shares_file
+      shares_file: config.value.shares_file,
+      smb_username: config.value.smb_username || null,
+      smb_password: config.value.smb_password || null,
+      smb_domain: config.value.smb_domain || null,
+      thread_count: config.value.thread_count || null
     };
     
     const response = await invoke('start_active_indexing', { config: indexConfig });
@@ -801,6 +919,15 @@ const clearResults = () => {
   progress.value = null;
   logs.value = [];
   result.value = null;
+};
+
+const abortIndexing = async () => {
+  try {
+    await invoke('abort_active_indexing');
+    logs.value.push('Abort signal sent...');
+  } catch (error) {
+    console.error('Error aborting indexing:', error);
+  }
 };
 
 const scrollLogToBottom = () => {
@@ -884,6 +1011,45 @@ onUnmounted(() => {
   padding: 1.5rem;
   height: 100%;
   overflow-y: auto;
+}
+
+.smb-credentials-section {
+  max-width: 800px;
+  margin: 0 auto 1rem auto;
+  background-color: var(--color-card-bg);
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+
+.smb-credentials-header {
+  padding: 1rem 1.5rem;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background-color 0.2s;
+}
+
+.smb-credentials-header:hover {
+  background-color: var(--color-button-hover);
+}
+
+.smb-credentials-header h3 {
+  color: var(--color-text);
+  margin: 0;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.expand-icon {
+  font-size: 0.7rem;
+}
+
+.smb-credentials-form {
+  padding: 0 1.5rem 1rem 1.5rem;
 }
 
 .empty-state {
@@ -1054,6 +1220,22 @@ onUnmounted(() => {
 
 .run-button.running {
   background-color: var(--color-warning);
+}
+
+.abort-button {
+  padding: 0.75rem 1.5rem;
+  background-color: #dc2626;
+  color: white;
+  border: none;
+  border-radius: 0.375rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-left: 0.75rem;
+}
+
+.abort-button:hover {
+  background-color: #b91c1c;
 }
 
 .operation-results {
