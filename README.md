@@ -1,6 +1,7 @@
 # Pillage Suite
 
 [![License: AGPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](LICENSE)
+[![Build and Release](https://github.com/m0xr4/PillageSuite/actions/workflows/release.yml/badge.svg)](https://github.com/m0xr4/PillageSuite/actions/workflows/release.yml)
 
 <img width="800" height="470" alt="image" src="https://github.com/user-attachments/assets/0a7dc93c-14db-47ee-a458-967a41bafd35" />
 
