@@ -157,17 +157,22 @@
             <!-- Progress Bar -->
             <div v-if="isRunning && progress" class="progress-container">
               <div class="progress-info">
-                <span class="progress-stage">{{ progress.stage.charAt(0).toUpperCase() + progress.stage.slice(1) }}</span>
+                <span class="progress-stage">{{ progressStageLabel }}</span>
                 <span class="progress-message">{{ progress.message }}</span>
               </div>
               <div class="progress-bar">
-                <div 
-                  class="progress-fill" 
+                <div
+                  class="progress-fill"
                   :style="{ width: progressPercentage + '%' }"
                 ></div>
               </div>
-              <div class="progress-text">
-                {{ progress.current }}{{ progress.total ? '/' + progress.total : '' }}
+              <div class="progress-meta">
+                <span class="progress-text">
+                  {{ progress.current }}{{ progress.total ? '/' + progress.total : '' }}{{ progressUnitLabel }}
+                </span>
+                <span v-if="progress.indexed_count > 0" class="progress-indexed">
+                  {{ progress.indexed_count.toLocaleString() }} entries indexed
+                </span>
               </div>
             </div>
 
@@ -305,17 +310,22 @@
             <!-- Progress Bar -->
             <div v-if="isRunning && progress" class="progress-container">
               <div class="progress-info">
-                <span class="progress-stage">{{ progress.stage.charAt(0).toUpperCase() + progress.stage.slice(1) }}</span>
+                <span class="progress-stage">{{ progressStageLabel }}</span>
                 <span class="progress-message">{{ progress.message }}</span>
               </div>
               <div class="progress-bar">
-                <div 
-                  class="progress-fill" 
+                <div
+                  class="progress-fill"
                   :style="{ width: progressPercentage + '%' }"
                 ></div>
               </div>
-              <div class="progress-text">
-                {{ progress.current }}{{ progress.total ? '/' + progress.total : '' }}
+              <div class="progress-meta">
+                <span class="progress-text">
+                  {{ progress.current }}{{ progress.total ? '/' + progress.total : '' }}{{ progressUnitLabel }}
+                </span>
+                <span v-if="progress.indexed_count > 0" class="progress-indexed">
+                  {{ progress.indexed_count.toLocaleString() }} entries indexed
+                </span>
               </div>
             </div>
 
@@ -454,17 +464,22 @@
             <!-- Progress Bar -->
             <div v-if="isRunning && progress" class="progress-container">
               <div class="progress-info">
-                <span class="progress-stage">{{ progress.stage.charAt(0).toUpperCase() + progress.stage.slice(1) }}</span>
+                <span class="progress-stage">{{ progressStageLabel }}</span>
                 <span class="progress-message">{{ progress.message }}</span>
               </div>
               <div class="progress-bar">
-                <div 
-                  class="progress-fill" 
+                <div
+                  class="progress-fill"
                   :style="{ width: progressPercentage + '%' }"
                 ></div>
               </div>
-              <div class="progress-text">
-                {{ progress.current }}{{ progress.total ? '/' + progress.total : '' }}
+              <div class="progress-meta">
+                <span class="progress-text">
+                  {{ progress.current }}{{ progress.total ? '/' + progress.total : '' }}{{ progressUnitLabel }}
+                </span>
+                <span v-if="progress.indexed_count > 0" class="progress-indexed">
+                  {{ progress.indexed_count.toLocaleString() }} entries indexed
+                </span>
               </div>
             </div>
 
@@ -607,17 +622,22 @@
             <!-- Progress Bar -->
             <div v-if="isRunning && progress" class="progress-container">
               <div class="progress-info">
-                <span class="progress-stage">{{ progress.stage.charAt(0).toUpperCase() + progress.stage.slice(1) }}</span>
+                <span class="progress-stage">{{ progressStageLabel }}</span>
                 <span class="progress-message">{{ progress.message }}</span>
               </div>
               <div class="progress-bar">
-                <div 
-                  class="progress-fill" 
+                <div
+                  class="progress-fill"
                   :style="{ width: progressPercentage + '%' }"
                 ></div>
               </div>
-              <div class="progress-text">
-                {{ progress.current }}{{ progress.total ? '/' + progress.total : '' }}
+              <div class="progress-meta">
+                <span class="progress-text">
+                  {{ progress.current }}{{ progress.total ? '/' + progress.total : '' }}{{ progressUnitLabel }}
+                </span>
+                <span v-if="progress.indexed_count > 0" class="progress-indexed">
+                  {{ progress.indexed_count.toLocaleString() }} entries indexed
+                </span>
               </div>
             </div>
 
@@ -725,6 +745,26 @@ const hasResults = computed(() => logs.value.length > 0 || result.value !== null
 const progressPercentage = computed(() => {
   if (!progress.value || !progress.value.total) return 0;
   return Math.min(100, (progress.value.current / progress.value.total) * 100);
+});
+
+const progressStageLabel = computed(() => {
+  if (!progress.value) return '';
+  switch (progress.value.stage) {
+    case 'enumerating': return 'Enumerating Shares';
+    case 'walking': return 'Walking Shares';
+    case 'connecting': return 'Connecting';
+    case 'complete': return 'Complete';
+    default: return progress.value.stage.charAt(0).toUpperCase() + progress.value.stage.slice(1);
+  }
+});
+
+const progressUnitLabel = computed(() => {
+  if (!progress.value) return '';
+  switch (progress.value.stage) {
+    case 'enumerating': return ' Hosts Scanned';
+    case 'walking': return ' Shares Indexed';
+    default: return '';
+  }
 });
 
 // Event listeners
@@ -1297,10 +1337,21 @@ onUnmounted(() => {
   transition: width 0.3s ease;
 }
 
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
 .progress-text {
-  text-align: center;
   font-size: 0.875rem;
   color: var(--color-text-muted);
+}
+
+.progress-indexed {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  font-style: italic;
 }
 
 .log-output {

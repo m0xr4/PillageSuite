@@ -58,6 +58,7 @@ enum WorkerOutput {
     Log(String),
     Error(String),
     Done,
+    ItemComplete,
 }
 
 /// Configuration shared across worker threads
@@ -120,6 +121,7 @@ pub struct ProgressUpdate {
     pub current: usize,
     pub total: Option<usize>,
     pub stage: String, // "connecting", "enumerating", "walking", "complete"
+    pub indexed_count: usize, // total entries indexed so far
 }
 
 /// Final result structure
@@ -299,14 +301,16 @@ fn send_progress_update(
     current: usize,
     total: Option<usize>,
     stage: String,
+    indexed_count: usize,
 ) {
     let update = ProgressUpdate {
         message,
         current,
         total,
         stage,
+        indexed_count,
     };
-    
+
     let _ = window.emit("indexing-progress", &update);
 }
 
@@ -334,41 +338,14 @@ fn walk_share_unc(
     // Keep track of total entries processed
     let mut entries_count = 0;
 
-    // Send progress update if this is the root level
+    // Process share root at root level
     if current_depth == 0 {
-        send_progress_update(
-            window,
-            format!("Walking share: {}", unc_path),
-            *global_count,
-            max_entries,
-            "walking".to_string(),
-        );
-        
-        // First, create an entry for the share root
         let added = process_share_root(unc_path, writer, debug_mode);
         entries_count += added;
         *global_count += added;
-        
-        // Update progress after processing the share root
-        send_progress_update(
-            window,
-            format!("Processing share: {}", unc_path),
-            *global_count,
-            max_entries,
-            "walking".to_string(),
-        );
     }
 
     if current_depth > max_depth {
-        if current_depth == 0 {
-            send_progress_update(
-                window,
-                "Reached maximum depth".to_string(),
-                entries_count,
-                max_entries,
-                "complete".to_string(),
-            );
-        }
         return entries_count;
     }
 
@@ -378,15 +355,6 @@ fn walk_share_unc(
             if debug_mode {
                 send_log_message(window, format!("Reached max entries limit ({}) for share: {}", limit, unc_path));
             }
-            if current_depth == 0 {
-                send_progress_update(
-                    window,
-                    "Reached maximum entries limit".to_string(),
-                    *global_count,
-                    max_entries,
-                    "complete".to_string(),
-                );
-            }
             return entries_count;
         }
     }
@@ -395,16 +363,6 @@ fn walk_share_unc(
     let entries = match fs::read_dir(&path) {
         Ok(e) => e,
         Err(_) => {
-            // Permission denied or not a directory, skip
-            if current_depth == 0 {
-                send_progress_update(
-                    window,
-                    "Access denied or invalid path".to_string(),
-                    *global_count,
-                    max_entries,
-                    "complete".to_string(),
-                );
-            }
             return entries_count;
         }
     };
@@ -423,6 +381,7 @@ fn walk_share_unc(
                         *global_count,
                         max_entries,
                         "complete".to_string(),
+                        *global_count,
                     );
                 }
                 return entries_count;
@@ -439,61 +398,23 @@ fn walk_share_unc(
         let added = process_filesystem_entry(&entry, writer, debug_mode);
         entries_count += added;
         *global_count += added;
-        
-        // Update progress at any depth to avoid UI stall during deep recursion
-        send_progress_update(
-            window,
-            format!("Processed {} entries", *global_count),
-            *global_count,
-            max_entries,
-            "walking".to_string(),
-        );
 
         // Recurse if directory
         if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
             let full_path = entry_path.to_string_lossy().to_string();
             let sub_entries = walk_share_unc(window, &full_path, current_depth + 1, max_depth, max_entries, writer, debug_mode, global_count);
             entries_count += sub_entries;
-            
-            // Update progress after recursion
-            send_progress_update(
-                window,
-                format!("Processed {} entries", *global_count),
-                *global_count,
-                max_entries,
-                "walking".to_string(),
-            );
-            
+
             // Check again after recursion
             if let Some(limit) = max_entries {
                 if *global_count >= limit {
                     if debug_mode {
                         send_log_message(window, format!("Reached max entries limit ({}) after recursion for: {}", limit, full_path));
                     }
-                    if current_depth == 0 {
-                        send_progress_update(
-                            window,
-                            "Reached maximum entries limit".to_string(),
-                            *global_count,
-                            max_entries,
-                            "complete".to_string(),
-                        );
-                    }
                     return entries_count;
                 }
             }
         }
-    }
-    
-    // Send completion update if we're at the root level
-    if current_depth == 0 {
-        send_progress_update(
-            window,
-            format!("Completed walking share: {} entries processed", *global_count),
-            *global_count,
-            max_entries,
-            "complete".to_string(),
-        );
     }
     
     entries_count
@@ -927,9 +848,10 @@ fn run_share_enum_only_mode(window: &Window, config: &Config, hosts: Vec<String>
         send_progress_update(
             window,
             format!("Enumerating shares on host: {}", host),
-            index,
+            index + 1,
             Some(hosts.len()),
             "enumerating".to_string(),
+            0,
         );
         
         send_log_message(window, format!("--- Enumerating shares on host: {} ---", host));
@@ -973,6 +895,7 @@ fn run_share_enum_only_mode(window: &Window, config: &Config, hosts: Vec<String>
         hosts.len(),
         Some(hosts.len()),
         "complete".to_string(),
+        0,
     );
     send_log_message(window, format!("Done! Share enumeration written to {}", config.output_path));
     Ok(())
@@ -997,52 +920,61 @@ fn run_normal_mode(window: &Window, config: &Config, hosts: Vec<String>, shares_
     if !shares_to_walk.is_empty() {
         // --shares mode: walk pre-defined shares
         send_log_message(window, "Mode: Walking pre-defined shares".to_string());
-        for unc_path in shares_to_walk {
+        let total_shares = shares_to_walk.len();
+        for (share_index, unc_path) in shares_to_walk.iter().enumerate() {
             let unc_path = unc_path.trim();
             if unc_path.is_empty() {
                 continue;
             }
+
+            send_progress_update(
+                window,
+                format!("Walking share: {}", unc_path),
+                share_index + 1,
+                Some(total_shares),
+                "walking".to_string(),
+                total_entries,
+            );
+
             send_log_message(window, format!("[+] Walking share: {}", unc_path));
             let mut share_count = 0;
-            let entries = walk_share_unc(window, &unc_path, 0, config.max_depth, config.max_entries, &mut writer, config.debug_mode, &mut share_count);
+            let entries = walk_share_unc(window, unc_path, 0, config.max_depth, config.max_entries, &mut writer, config.debug_mode, &mut share_count);
             total_entries += entries;
             writer.flush()?;
         }
     } else {
-        // Normal mode: enumerate shares from hosts
-        for host in hosts {
+        // Normal mode: Phase 1 - enumerate shares from all hosts, Phase 2 - walk them
+        let hosts_total = hosts.len();
+        let mut all_shares = Vec::new();
+
+        // Phase 1: Enumerate shares from hosts
+        for (host_index, host) in hosts.iter().enumerate() {
             let host = host.trim();
             if host.is_empty() {
                 continue;
             }
-            send_log_message(window, format!("--- Enumerating shares on host: {} ---", host));
-            
+
             send_progress_update(
                 window,
-                format!("Connecting to host: {}", host),
-                total_entries,
-                None,
-                "connecting".to_string(),
+                format!("Enumerating shares on host: {}", host),
+                host_index + 1,
+                Some(hosts_total),
+                "enumerating".to_string(),
+                0,
             );
-            
+
+            send_log_message(window, format!("--- Enumerating shares on host: {} ---", host));
+
             match enumerate_shares(host) {
                 Ok(shares) => {
                     for share in shares {
-                        // Skip standard admin shares
                         if should_skip_share(&share) {
                             if config.debug_mode {
                                 send_log_message(window, format!("Skipping share: {}", share));
                             }
                             continue;
                         }
-
-                        // UNC path
-                        let unc = format!(r"\\{}\{}", host, share);
-                        send_log_message(window, format!("[+] Walking share: {}", unc));
-                        let mut share_count = 0;
-                        let entries = walk_share_unc(window, &unc, 0, config.max_depth, config.max_entries, &mut writer, config.debug_mode, &mut share_count);
-                        total_entries += entries;
-                        writer.flush()?;
+                        all_shares.push(format!(r"\\{}\{}", host, share));
                     }
                 }
                 Err(e) => {
@@ -1054,6 +986,26 @@ fn run_normal_mode(window: &Window, config: &Config, hosts: Vec<String>, shares_
                 }
             }
         }
+
+        // Phase 2: Walk all discovered shares
+        send_log_message(window, format!("Found {} shares to walk", all_shares.len()));
+        let total_shares = all_shares.len();
+        for (share_index, unc) in all_shares.iter().enumerate() {
+            send_progress_update(
+                window,
+                format!("Walking share: {}", unc),
+                share_index + 1,
+                Some(total_shares),
+                "walking".to_string(),
+                total_entries,
+            );
+
+            send_log_message(window, format!("[+] Walking share: {}", unc));
+            let mut share_count = 0;
+            let entries = walk_share_unc(window, unc, 0, config.max_depth, config.max_entries, &mut writer, config.debug_mode, &mut share_count);
+            total_entries += entries;
+            writer.flush()?;
+        }
     }
 
     // Final flush
@@ -1064,6 +1016,7 @@ fn run_normal_mode(window: &Window, config: &Config, hosts: Vec<String>, shares_
         total_entries,
         None,
         "complete".to_string(),
+        total_entries,
     );
     send_log_message(window, format!("Done! File enumeration written to {} ({} entries)", config.output_path, total_entries));
     Ok(total_entries)
@@ -1345,6 +1298,7 @@ fn worker_thread(
                 &global_count,
             );
         }
+        let _ = sender.send(WorkerOutput::ItemComplete);
     }
 
     let _ = sender.send(WorkerOutput::Done);
@@ -1357,6 +1311,8 @@ fn writer_thread(
     output_path: String,
     total_workers: usize,
     _share_enum_only: bool,
+    total_items: usize,
+    initial_stage: String,
 ) -> (usize, Vec<String>) {
     let file = match OpenOptions::new()
         .create(true)
@@ -1376,6 +1332,7 @@ fn writer_thread(
     let mut errors = Vec::new();
     let mut done_count = 0;
     let mut records_since_flush: usize = 0;
+    let mut items_completed: usize = 0;
 
     while done_count < total_workers {
         if INDEX_ABORT_REQUESTED.load(Ordering::Relaxed) {
@@ -1394,13 +1351,6 @@ fn writer_thread(
                         let _ = writer.flush();
                         records_since_flush = 0;
                     }
-
-                    let _ = window.emit("indexing-progress", ProgressUpdate {
-                        message: format!("Processed {} entries", total_entries),
-                        current: total_entries,
-                        total: None,
-                        stage: "walking".to_string(),
-                    });
                 }
                 WorkerOutput::TextLine(line) => {
                     let _ = writeln!(writer, "{}", line);
@@ -1411,13 +1361,6 @@ fn writer_thread(
                         let _ = writer.flush();
                         records_since_flush = 0;
                     }
-
-                    let _ = window.emit("indexing-progress", ProgressUpdate {
-                        message: format!("Found {} shares", total_entries),
-                        current: total_entries,
-                        total: None,
-                        stage: "enumerating".to_string(),
-                    });
                 }
                 WorkerOutput::Log(msg) => {
                     let _ = window.emit("indexing-log", msg);
@@ -1425,6 +1368,20 @@ fn writer_thread(
                 WorkerOutput::Error(msg) => {
                     let _ = window.emit("indexing-log", msg.clone());
                     errors.push(msg);
+                }
+                WorkerOutput::ItemComplete => {
+                    items_completed += 1;
+                    let _ = window.emit("indexing-progress", ProgressUpdate {
+                        message: if initial_stage == "enumerating" {
+                            format!("Scanning host {}/{}", items_completed, total_items)
+                        } else {
+                            format!("Indexing share {}/{} ({} entries)", items_completed, total_items, total_entries)
+                        },
+                        current: items_completed,
+                        total: Some(total_items),
+                        stage: initial_stage.clone(),
+                        indexed_count: total_entries,
+                    });
                 }
                 WorkerOutput::Done => {
                     done_count += 1;
@@ -1461,6 +1418,7 @@ pub async fn start_active_indexing(
         0,
         None,
         "connecting".to_string(),
+        0,
     );
 
     // Create output file in current directory
@@ -1597,8 +1555,9 @@ pub async fn start_active_indexing(
                 None
             };
 
+            let hosts_total = hosts.len();
             let mut all_uncs = Vec::new();
-            for host in &hosts {
+            for (host_index, host) in hosts.iter().enumerate() {
                 if INDEX_ABORT_REQUESTED.load(Ordering::Relaxed) {
                     break;
                 }
@@ -1606,6 +1565,16 @@ pub async fn start_active_indexing(
                 if host.is_empty() {
                     continue;
                 }
+
+                send_progress_update(
+                    &window,
+                    format!("Enumerating shares on host: {}", host),
+                    host_index + 1,
+                    Some(hosts_total),
+                    "enumerating".to_string(),
+                    0,
+                );
+
                 send_log_message(&window, format!("Enumerating shares on host: {}", host));
                 match enumerate_shares(host) {
                     Ok(shares) => {
@@ -1631,7 +1600,7 @@ pub async fn start_active_indexing(
         };
 
         if work_items.is_empty() {
-            send_progress_update(&window, "No work items found".to_string(), 0, None, "complete".to_string());
+            send_progress_update(&window, "No work items found".to_string(), 0, None, "complete".to_string(), 0);
             return Ok(IndexResult {
                 success: true,
                 message: "No shares or hosts to process".to_string(),
@@ -1688,9 +1657,15 @@ pub async fn start_active_indexing(
         let writer_window = window.clone();
         let writer_output = output_filename.clone();
         let writer_share_enum_only = internal_config.share_enum_only;
+        let total_work_items = queue.len();
+        let initial_stage = if internal_config.share_enum_only {
+            "enumerating".to_string()
+        } else {
+            "walking".to_string()
+        };
 
         let writer_handle = thread::spawn(move || {
-            writer_thread(receiver, writer_window, writer_output, num_workers, writer_share_enum_only)
+            writer_thread(receiver, writer_window, writer_output, num_workers, writer_share_enum_only, total_work_items, initial_stage)
         });
 
         // Wait for all workers to finish
@@ -1715,6 +1690,7 @@ pub async fn start_active_indexing(
         total_entries,
         None,
         "complete".to_string(),
+        total_entries,
     );
 
     Ok(IndexResult {

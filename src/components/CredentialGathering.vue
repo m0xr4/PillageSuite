@@ -128,14 +128,26 @@
             
             <div class="config-item">
               <label>
-                <input 
-                  type="checkbox" 
+                <input
+                  type="checkbox"
                   v-model="config.debug_mode"
                   :disabled="isRunning"
                 >
                 Debug Mode
               </label>
               <small class="help-text">Enable detailed logging output</small>
+            </div>
+
+            <div class="config-item">
+              <label>Thread Count</label>
+              <input
+                type="number"
+                v-model.number="config.thread_count"
+                min="1"
+                max="32"
+                :disabled="isRunning"
+              >
+              <small class="help-text">Number of parallel worker threads (1 = sequential, default: 4)</small>
             </div>
           </div>
         </div>
@@ -316,6 +328,7 @@ const config = ref({
   file_list: '',
   string_list: '',
   debug_mode: false,
+  thread_count: 4,
   smb_domain: '',
   smb_username: '',
   smb_password: ''
@@ -396,6 +409,7 @@ const runCredentialGathering = async () => {
       file_list: config.value.file_list,
       string_list: config.value.string_list,
       debug_mode: config.value.debug_mode,
+      thread_count: config.value.thread_count || null,
       smb_username: config.value.smb_username || null,
       smb_password: config.value.smb_password || null,
       smb_domain: config.value.smb_domain || null

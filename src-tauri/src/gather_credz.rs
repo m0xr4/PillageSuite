@@ -2,7 +2,11 @@ use std::fs::{self, File};
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
 use chrono::Utc;
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
@@ -18,6 +22,7 @@ pub struct CredGatherConfig {
     pub file_list: String,
     pub string_list: String,
     pub debug_mode: bool,
+    pub thread_count: Option<usize>,
     pub smb_username: Option<String>,
     pub smb_password: Option<String>,
     pub smb_domain: Option<String>,
@@ -63,6 +68,47 @@ fn send_log_message(window: &Window, message: String) {
 // ============================
 
 static ABORT_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+// ============================
+// Threading types
+// ============================
+
+/// Work-stealing queue: workers pull next item via AtomicUsize index
+struct WorkQueue {
+    items: Vec<String>,
+    next_index: AtomicUsize,
+}
+
+impl WorkQueue {
+    fn new(items: Vec<String>) -> Self {
+        WorkQueue {
+            items,
+            next_index: AtomicUsize::new(0),
+        }
+    }
+
+    fn next(&self) -> Option<String> {
+        let idx = self.next_index.fetch_add(1, Ordering::Relaxed);
+        self.items.get(idx).cloned()
+    }
+}
+
+/// Messages sent from worker threads to the collector thread
+enum CredWorkerOutput {
+    FileHits { path: String, hits: Vec<String> },
+    FileDone,
+    Log(String),
+    Error(String),
+    Done,
+}
+
+/// Configuration shared across worker threads
+struct CredWorkerConfig {
+    debug_mode: bool,
+    smb_username: String,
+    smb_password: String,
+    smb_domain: String,
+}
 
 // ============================
 // Core helpers
@@ -359,6 +405,149 @@ fn highlight_line(line: &str, ac: &AhoCorasick) -> String {
 }
 
 // ============================
+// Worker thread
+// ============================
+
+fn cred_worker_thread(
+    worker_id: usize,
+    queue: Arc<WorkQueue>,
+    ac: Arc<AhoCorasick>,
+    sender: mpsc::Sender<CredWorkerOutput>,
+    worker_config: CredWorkerConfig,
+) {
+    // Set up per-thread SMB impersonation if credentials are provided
+    let _impersonation_guard = if !worker_config.smb_username.is_empty() && !worker_config.smb_password.is_empty() {
+        match crate::smb_auth::start_impersonation(
+            &worker_config.smb_username,
+            &worker_config.smb_password,
+            &worker_config.smb_domain,
+        ) {
+            Ok(guard) => {
+                let _ = sender.send(CredWorkerOutput::Log(format!(
+                    "Worker {}: SMB impersonation established", worker_id
+                )));
+                Some(guard)
+            }
+            Err(e) => {
+                let _ = sender.send(CredWorkerOutput::Error(format!(
+                    "Worker {}: SMB impersonation failed: {}", worker_id, e
+                )));
+                let _ = sender.send(CredWorkerOutput::Done);
+                return;
+            }
+        }
+    } else {
+        None
+    };
+
+    while let Some(file_path) = queue.next() {
+        if ABORT_REQUESTED.load(Ordering::Relaxed) {
+            break;
+        }
+
+        if worker_config.debug_mode {
+            let _ = sender.send(CredWorkerOutput::Log(format!(
+                "Worker {}: Processing file: {}", worker_id, file_path
+            )));
+        }
+
+        match search_file(&file_path, &ac) {
+            Ok(hits) => {
+                if !hits.is_empty() {
+                    let _ = sender.send(CredWorkerOutput::Log(format!(
+                        "[+] Hits in: {} ({} matches)", file_path, hits.len()
+                    )));
+                    let _ = sender.send(CredWorkerOutput::FileHits { path: file_path, hits });
+                } else {
+                    let _ = sender.send(CredWorkerOutput::FileDone);
+                }
+            }
+            Err(e) => {
+                let _ = sender.send(CredWorkerOutput::Error(format!(
+                    "Error processing file {}: {}", file_path, e
+                )));
+            }
+        }
+    }
+
+    let _ = sender.send(CredWorkerOutput::Done);
+}
+
+// ============================
+// Collector thread
+// ============================
+
+fn cred_collector_thread(
+    receiver: mpsc::Receiver<CredWorkerOutput>,
+    window: Window,
+    total_files: usize,
+    total_workers: usize,
+) -> (Vec<(String, Vec<String>)>, Vec<String>, usize) {
+    let mut file_results: Vec<(String, Vec<String>)> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    let mut files_counted: usize = 0;
+    let mut done_count: usize = 0;
+
+    loop {
+        if ABORT_REQUESTED.load(Ordering::Relaxed) {
+            send_log_message(&window, "Abort detected in collector. Finalizing partial results...".to_string());
+            break;
+        }
+
+        match receiver.recv_timeout(Duration::from_millis(200)) {
+            Ok(msg) => match msg {
+                CredWorkerOutput::FileHits { path, hits } => {
+                    file_results.push((path, hits));
+                    files_counted += 1;
+                    send_progress_update(
+                        &window,
+                        format!("Processed {} files", files_counted),
+                        files_counted,
+                        Some(total_files),
+                        "scanning",
+                    );
+                }
+                CredWorkerOutput::FileDone => {
+                    files_counted += 1;
+                    send_progress_update(
+                        &window,
+                        format!("Processed {} files", files_counted),
+                        files_counted,
+                        Some(total_files),
+                        "scanning",
+                    );
+                }
+                CredWorkerOutput::Log(msg) => {
+                    send_log_message(&window, msg);
+                }
+                CredWorkerOutput::Error(msg) => {
+                    send_log_message(&window, msg.clone());
+                    errors.push(msg);
+                    files_counted += 1;
+                    send_progress_update(
+                        &window,
+                        format!("Processed {} files", files_counted),
+                        files_counted,
+                        Some(total_files),
+                        "scanning",
+                    );
+                }
+                CredWorkerOutput::Done => {
+                    done_count += 1;
+                    if done_count >= total_workers {
+                        break;
+                    }
+                }
+            },
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    (file_results, errors, files_counted)
+}
+
+// ============================
 // Tauri command
 // ============================
 
@@ -369,12 +558,14 @@ pub async fn start_credential_gathering(window: Window, config: CredGatherConfig
     send_progress_update(&window, "Starting credential gathering...".to_string(), 0, None, "starting");
     send_log_message(&window, "Credential gathering started".to_string());
 
-    // Set up impersonation if SMB credentials are provided
+    let thread_count = config.thread_count.unwrap_or(4).max(1).min(32);
+
     let smb_username = config.smb_username.clone().unwrap_or_default();
     let smb_password = config.smb_password.clone().unwrap_or_default();
     let smb_domain = config.smb_domain.clone().unwrap_or_default();
 
-    let _impersonation_guard = if !smb_username.is_empty() && !smb_password.is_empty() {
+    // For sequential mode, set up impersonation in the main thread
+    let _impersonation_guard = if thread_count == 1 && !smb_username.is_empty() && !smb_password.is_empty() {
         send_log_message(&window, format!(
             "Using explicit SMB credentials: {}{}{}",
             if smb_domain.is_empty() { "" } else { &smb_domain },
@@ -391,8 +582,10 @@ pub async fn start_credential_gathering(window: Window, config: CredGatherConfig
                 return Err(format!("SMB authentication failed: {}", e));
             }
         }
-    } else {
+    } else if thread_count == 1 {
         send_log_message(&window, "Using current session credentials".to_string());
+        None
+    } else {
         None
     };
 
@@ -444,49 +637,94 @@ pub async fn start_credential_gathering(window: Window, config: CredGatherConfig
     let total = file_paths.len();
     send_progress_update(&window, "Scanning files...".to_string(), 0, Some(total), "scanning");
 
-    let mut file_results: Vec<(String, Vec<String>)> = Vec::new();
-    let mut errors: Vec<String> = Vec::new();
-    let mut current: usize = 0;
-    let mut aborted: bool = false;
+    let (file_results, errors, files_counted, aborted) = if thread_count <= 1 || total <= 1 {
+        // Sequential path
+        let mut file_results: Vec<(String, Vec<String>)> = Vec::new();
+        let mut errors: Vec<String> = Vec::new();
+        let mut current: usize = 0;
+        let mut aborted = false;
 
-    for file_path in file_paths {
-        if config.debug_mode {
-            send_log_message(&window, format!("Processing file: {}", file_path));
-        }
-        // Check for abort before processing each file
-        if ABORT_REQUESTED.load(Ordering::Relaxed) {
-            aborted = true;
-            send_log_message(&window, "Abort requested. Finalizing partial results...".to_string());
-            break;
-        }
+        for file_path in file_paths {
+            if config.debug_mode {
+                send_log_message(&window, format!("Processing file: {}", file_path));
+            }
+            if ABORT_REQUESTED.load(Ordering::Relaxed) {
+                aborted = true;
+                send_log_message(&window, "Abort requested. Finalizing partial results...".to_string());
+                break;
+            }
 
-        match search_file(&file_path, &ac) {
-            Ok(hits) => {
-                if !hits.is_empty() {
-                    send_log_message(&window, format!("[+] Hits in: {} ({} matches)", file_path, hits.len()));
-                    file_results.push((file_path.clone(), hits));
+            match search_file(&file_path, &ac) {
+                Ok(hits) => {
+                    if !hits.is_empty() {
+                        send_log_message(&window, format!("[+] Hits in: {} ({} matches)", file_path, hits.len()));
+                        file_results.push((file_path.clone(), hits));
+                    }
+                }
+                Err(e) => {
+                    let msg = format!("Error processing file {}: {}", file_path, e);
+                    send_log_message(&window, msg.clone());
+                    errors.push(msg);
                 }
             }
-            Err(e) => {
-                let msg = format!("Error processing file {}: {}", file_path, e);
-                send_log_message(&window, msg.clone());
-                errors.push(msg);
-            }
+
+            current += 1;
+            send_progress_update(&window, format!("Processed {} files", current), current, Some(total), "scanning");
         }
 
-        // Increment after finishing processing the file so the count reflects completed work
-        current += 1;
-        // Emit progress on every file to ensure the UI updates incrementally
-        send_progress_update(&window, format!("Processed {} files", current), current, Some(total), "scanning");
-    }
+        (file_results, errors, current, aborted)
+    } else {
+        // Threaded path
+        let num_workers = thread_count.min(total);
+        send_log_message(&window, format!("Using {} worker threads for {} files", num_workers, total));
+
+        let ac = Arc::new(ac);
+        let queue = Arc::new(WorkQueue::new(file_paths));
+        let (sender, receiver) = mpsc::channel::<CredWorkerOutput>();
+
+        let worker_config = CredWorkerConfig {
+            debug_mode: config.debug_mode,
+            smb_username: smb_username.clone(),
+            smb_password: smb_password.clone(),
+            smb_domain: smb_domain.clone(),
+        };
+
+        // Spawn worker threads
+        for worker_id in 0..num_workers {
+            let q = Arc::clone(&queue);
+            let s = sender.clone();
+            let ac_ref = Arc::clone(&ac);
+            let wc = CredWorkerConfig {
+                debug_mode: worker_config.debug_mode,
+                smb_username: worker_config.smb_username.clone(),
+                smb_password: worker_config.smb_password.clone(),
+                smb_domain: worker_config.smb_domain.clone(),
+            };
+            thread::spawn(move || {
+                cred_worker_thread(worker_id, q, ac_ref, s, wc);
+            });
+        }
+        drop(sender); // Drop the last clone so collector sees Disconnected when workers finish
+
+        // Spawn collector thread
+        let collector_window = window.clone();
+        let total_workers = num_workers;
+        let collector_handle = thread::spawn(move || {
+            cred_collector_thread(receiver, collector_window, total, total_workers)
+        });
+
+        let (file_results, errors, files_counted) = collector_handle.join().unwrap_or((Vec::new(), Vec::new(), 0));
+        let aborted = ABORT_REQUESTED.load(Ordering::Relaxed);
+
+        (file_results, errors, files_counted, aborted)
+    };
 
     let total_files_with_hits = file_results.len();
     let total_hit_entries: usize = file_results.iter().map(|(_, hits)| hits.len()).sum();
 
     // Generate report
     let (success, message, output_file) = if aborted {
-        // On abort, always write a report to reflect partial progress
-        match generate_html_report(&file_results, &search_strings, total, total_files_with_hits) {
+        match generate_html_report(&file_results, &search_strings, files_counted, total_files_with_hits) {
             Ok(path) => {
                 send_log_message(&window, format!("HTML report written to: {}", &path));
                 (true, "Aborted by user. Partial report generated".to_string(), path)
@@ -514,7 +752,7 @@ pub async fn start_credential_gathering(window: Window, config: CredGatherConfig
     };
 
     let stage = if aborted { "aborted" } else if success { "complete" } else { "error" };
-    let final_current = if aborted { current } else { total };
+    let final_current = if aborted { files_counted } else { total };
     send_progress_update(&window, message.clone(), final_current, Some(total), stage);
 
     Ok(GatherResult {
